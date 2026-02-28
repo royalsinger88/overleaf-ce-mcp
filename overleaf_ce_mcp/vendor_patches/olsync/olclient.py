@@ -310,32 +310,27 @@ class OverleafClient(object):
 
         # 兼容 project_infos 结构差异（同 upload_file）
         project_tree = project_infos.get('project', project_infos)
+        root_folder = project_tree['rootFolder'][0]
 
-        # The file name contains path separators, check folders
-        if PATH_SEP in file_name:
-            local_folders = file_name.split(PATH_SEP)[:-1]  # Remove last item since this is the file name
-            current_overleaf_folder = project_tree['rootFolder'][0]['folders']  # Set the current remote folder
+        parts = [p for p in file_name.split(PATH_SEP) if p]
+        if not parts:
+            return False
 
-            for local_folder in local_folders:
-                for remote_folder in current_overleaf_folder:
-                    if local_folder.lower() == remote_folder['name'].lower():
+        target_name = parts[-1]
+        folder = root_folder
+        for part in parts[:-1]:
+            next_folder = next(
+                (f for f in folder.get('folders', []) if f.get('name', '').lower() == part.lower()),
+                None
+            )
+            if next_folder is None:
+                return False
+            folder = next_folder
 
-                        file = next((v for v in remote_folder['docs'] if v['name'] == file_name.split(PATH_SEP)[-1]),
-                                    None)
-                        if file is None:
-                            file = next((v for v in remote_folder['fileRefs'] if v['name'] == file_name.split(PATH_SEP)[-1]),
-                                    None)
-                            type_ = "file"
-
-                        current_overleaf_folder = remote_folder['folders']
-                        break
-        # File is in root folder
-        else:
-            file = next((v for v in project_tree['rootFolder'][0]['docs'] if v['name'] == file_name), None)
-            if file is None:
-                file = next((v for v in project_tree['rootFolder'][0]['fileRefs'] if v['name'] == file_name.split(PATH_SEP)[-1]),
-                        None)
-                type_ = "file"
+        file = next((v for v in folder.get('docs', []) if v.get('name') == target_name), None)
+        if file is None:
+            file = next((v for v in folder.get('fileRefs', []) if v.get('name') == target_name), None)
+            type_ = "file"
 
         # File not found!
         if file is None:
@@ -345,7 +340,7 @@ class OverleafClient(object):
             "X-Csrf-Token": self._csrf
         }
 
-        r = reqs.delete(DELETE_URL.format(project_id, type_, file['_id']), 
+        r = reqs.delete(self._DELETE_URL.format(project_id, type_, file['_id']), 
             cookies=self._cookie, headers=headers, json={})
 
         # return r.content, r.status_code 
