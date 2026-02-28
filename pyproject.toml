@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "overleaf-ce-mcp"
+version = "0.1.0"
+description = "面向 Overleaf Community Edition 的 MCP 适配服务（基于 overleaf-sync-ce + 本地 LaTeX 工作流）"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "overleaf-ce-mcp" }
+]
+dependencies = [
+  "mcp>=1.0.0",
+]
+
+[project.scripts]
+overleaf-ce-mcp = "overleaf_ce_mcp.server:main"
+
+[tool.setuptools]
+packages = ["overleaf_ce_mcp"]

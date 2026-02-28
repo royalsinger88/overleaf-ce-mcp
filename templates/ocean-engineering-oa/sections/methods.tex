@@ -1,0 +1,10 @@
+\section{Methods}
+
+\subsection{Problem formulation}
+Let $\mathbf{x}$ denote the input variables and $y$ the target output. The objective is to learn a mapping $f:\mathbf{x}\mapsto y$ under practical constraints while minimizing prediction error and engineering cost.
+
+\subsection{Model architecture}
+The method consists of data preprocessing, a core solver, and post-processing modules. The core solver adopts a multi-stage optimization strategy and constraint terms to improve convergence stability and physical plausibility.
+
+\subsection{Training and implementation details}
+Training uses stratified sampling. Optimizer settings and hyper-parameters are provided in supplementary materials. Experiments are repeated under a unified hardware environment, and mean/variance statistics are reported.
