@@ -120,6 +120,15 @@ def ols_sync(
     """执行 ols 同步。"""
     args: List[str] = []
 
+    # 防止误把 workspace 根目录内容同步进单个项目：
+    # 当传入 --name 且 workspace 下存在同名子目录时，自动收敛到该子目录。
+    scoped_workspace = workspace_path
+    if workspace_path and project_name:
+        wp = Path(workspace_path).expanduser().resolve()
+        candidate = wp / project_name
+        if candidate.is_dir():
+            scoped_workspace = str(candidate)
+
     if mode == "local-only":
         args.append("--local-only")
     elif mode == "remote-only":
@@ -129,8 +138,8 @@ def ols_sync(
 
     if project_name:
         args += ["--name", project_name]
-    if workspace_path:
-        args += ["--path", workspace_path]
+    if scoped_workspace:
+        args += ["--path", scoped_workspace]
     if ce_url:
         args += ["--ce-url", ce_url]
     if store_path:
@@ -147,5 +156,5 @@ def ols_sync(
         extra_env["OLS_DELETE_POLICY"] = delete_policy
 
     # 未传 workspace_path 时，沿用 cwd 的项目目录推断策略。
-    cwd = workspace_path if workspace_path else None
+    cwd = scoped_workspace if scoped_workspace else None
     return run_ols(args, cwd=cwd, extra_env=extra_env)

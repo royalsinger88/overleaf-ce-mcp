@@ -87,6 +87,7 @@ overleaf-ce-mcp
   - 传 `target_project`
   - `existing_project_strategy=merge`：合并更新，不主动删除远端多余文件
   - `existing_project_strategy=replace`：按本地覆盖远端（会删除远端本地不存在的文件）
+  - 同步安全护栏：当传 `project_name` 且 `workspace_path` 下存在同名子目录时，会自动收敛到该子目录，避免误同步整个 workspace。
 
 - `dry_run=true`：
   - 只输出打包与执行计划，不执行实际上传/同步。
