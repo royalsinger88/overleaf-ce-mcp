@@ -23,6 +23,7 @@ from .deep_research import (
 )
 from .diagram_workflow import init_model_diagram_pack
 from .optimization_loop import run_optimization_loop
+from .review import generate_daily_review, generate_weekly_summary
 from .sync import command_exists, ols_list, ols_login, ols_sync, run_command
 from .scholar import (
     build_related_work_pack,
@@ -611,7 +612,7 @@ async def list_tools() -> List[Tool]:
                     "query": {"type": "string", "description": "检索 query（可选）"},
                     "source": {
                         "type": "string",
-                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar"],
+                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar", "openreview"],
                         "description": "检索来源（默认 all）",
                     },
                     "max_rounds": {"type": "integer", "description": "最大循环轮数（默认 4）"},
@@ -638,6 +639,34 @@ async def list_tools() -> List[Tool]:
                         "type": "boolean",
                         "description": "是否写入 claim_evidence 候选证据（默认 true）",
                     },
+                },
+                "required": ["project_dir"],
+            },
+        ),
+        Tool(
+            name="generate_daily_review",
+            description="自动生成每日复盘，并可回写 review_state 供后续循环使用。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "day": {"type": "string", "description": "目标日期 YYYY-MM-DD（默认当天）"},
+                    "overwrite": {"type": "boolean", "description": "是否覆盖同名日报（默认 true）"},
+                    "write_state": {"type": "boolean", "description": "是否回写 review_state（默认 true）"},
+                },
+                "required": ["project_dir"],
+            },
+        ),
+        Tool(
+            name="generate_weekly_summary",
+            description="自动生成每周总结，并可回写 review_state 供后续循环使用。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "anchor_day": {"type": "string", "description": "锚点日期 YYYY-MM-DD（默认当天）"},
+                    "overwrite": {"type": "boolean", "description": "是否覆盖同名周报（默认 true）"},
+                    "write_state": {"type": "boolean", "description": "是否回写 review_state（默认 true）"},
                 },
                 "required": ["project_dir"],
             },
@@ -1388,6 +1417,30 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             max_candidates=arguments.get("max_candidates"),
             write_daily_review=arguments.get("write_daily_review"),
             append_claim_evidence=arguments.get("append_claim_evidence"),
+        )
+        return _dump(data)
+
+    if name == "generate_daily_review":
+        project_dir = arguments.get("project_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        data = generate_daily_review(
+            project_dir=str(project_dir),
+            day=str(arguments.get("day")) if arguments.get("day") else None,
+            overwrite=_as_bool(arguments.get("overwrite"), True),
+            write_state=_as_bool(arguments.get("write_state"), True),
+        )
+        return _dump(data)
+
+    if name == "generate_weekly_summary":
+        project_dir = arguments.get("project_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        data = generate_weekly_summary(
+            project_dir=str(project_dir),
+            anchor_day=str(arguments.get("anchor_day")) if arguments.get("anchor_day") else None,
+            overwrite=_as_bool(arguments.get("overwrite"), True),
+            write_state=_as_bool(arguments.get("write_state"), True),
         )
         return _dump(data)
 

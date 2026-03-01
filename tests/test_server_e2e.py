@@ -19,6 +19,8 @@ def test_list_tools_contains_key_entries():
     assert "letpub_get_journal_detail" in names
     assert "init_paper_state_workspace" in names
     assert "run_optimization_loop" in names
+    assert "generate_daily_review" in names
+    assert "generate_weekly_summary" in names
     assert "list_academic_source_capabilities" in names
     assert "fetch_paper_fulltext" in names
     assert "sync_zotero_paper_state" in names
@@ -162,3 +164,37 @@ def test_execute_tool_search_openreview_papers(monkeypatch):
     data = json.loads(text)
     assert data["ok"] is True
     assert data["count"] == 1
+
+
+def test_execute_tool_generate_daily_review(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "generate_daily_review",
+        lambda **kwargs: {"ok": True, "date": "2026-03-01", "path": "/tmp/daily.md"},
+    )
+    text = asyncio.run(
+        server._execute_tool(
+            "generate_daily_review",
+            {"project_dir": "/tmp/paper-project", "day": "2026-03-01"},
+        )
+    )
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert data["date"] == "2026-03-01"
+
+
+def test_execute_tool_generate_weekly_summary(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "generate_weekly_summary",
+        lambda **kwargs: {"ok": True, "week_tag": "2026-W09", "path": "/tmp/weekly.md"},
+    )
+    text = asyncio.run(
+        server._execute_tool(
+            "generate_weekly_summary",
+            {"project_dir": "/tmp/paper-project", "anchor_day": "2026-03-01"},
+        )
+    )
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert data["week_tag"] == "2026-W09"

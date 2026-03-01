@@ -427,9 +427,11 @@ def run_optimization_loop(
             no_new_evidence_rounds = 0
 
         next_actions = strategy.get("next_actions") if isinstance(strategy.get("next_actions"), list) else []
+        round_ts = _dt.datetime.now(_dt.timezone.utc).isoformat()
         round_data: Dict[str, Any] = {
             "round_index": idx,
             "stage": stage,
+            "generated_at": round_ts,
             "score": score,
             "improvement": improvement,
             "paper_count": paper_count,
@@ -474,6 +476,7 @@ def run_optimization_loop(
                         "claim": f"Round {idx} candidate evidence: {str(p.get('title') or '[untitled]')}",
                         "source_type": source_type,
                         "source": source_value,
+                        "recorded_at": round_ts,
                         "confidence": confidence,
                         "status": "candidate",
                         "note": "auto-appended by run_optimization_loop",
