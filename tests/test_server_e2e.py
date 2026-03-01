@@ -23,6 +23,8 @@ def test_list_tools_contains_key_entries():
     assert "run_paper_doctor" in names
     assert "list_upgrade_tasks" in names
     assert "run_priority_upgrade_loop" in names
+    assert "list_generic_priority_plan_templates" in names
+    assert "init_generic_priority_plan" in names
     assert "list_generic_priority_tasks" in names
     assert "run_generic_priority_loop" in names
     assert "generate_daily_review" in names
@@ -309,6 +311,40 @@ def test_execute_tool_list_generic_priority_tasks(monkeypatch):
     data = json.loads(text)
     assert data["ok"] is True
     assert data["count"] == 1
+
+
+def test_execute_tool_list_generic_priority_plan_templates(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "list_generic_priority_plan_templates",
+        lambda **kwargs: {"ok": True, "count": 2, "templates": [{"name": "a"}, {"name": "b"}]},
+    )
+    text = asyncio.run(
+        server._execute_tool(
+            "list_generic_priority_plan_templates",
+            {},
+        )
+    )
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert data["count"] == 2
+
+
+def test_execute_tool_init_generic_priority_plan(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "init_generic_priority_plan",
+        lambda **kwargs: {"ok": True, "plan_path": "/tmp/ws/plan.json"},
+    )
+    text = asyncio.run(
+        server._execute_tool(
+            "init_generic_priority_plan",
+            {"workspace_dir": "/tmp/ws", "template_name": "dev-feature-cycle"},
+        )
+    )
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert data["plan_path"].endswith("plan.json")
 
 
 def test_execute_tool_run_generic_priority_loop(monkeypatch):

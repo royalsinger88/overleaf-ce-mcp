@@ -1,0 +1,62 @@
+{
+  "tasks": [
+    {
+      "id": "health_check",
+      "title": "执行基础健康检查",
+      "impact": 10,
+      "effort": 2,
+      "dependencies": [],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'run health checks'",
+        "cwd": ".",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "backup_state",
+      "title": "备份关键状态与配置",
+      "impact": 8,
+      "effort": 2,
+      "dependencies": [
+        "health_check"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'backup state files'",
+        "cwd": ".",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "cleanup_artifacts",
+      "title": "清理历史产物",
+      "impact": 7,
+      "effort": 2,
+      "dependencies": [
+        "backup_state"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'cleanup artifacts'",
+        "cwd": ".",
+        "timeout_sec": 900
+      }
+    },
+    {
+      "id": "verify_after_cleanup",
+      "title": "清理后复核",
+      "impact": 8,
+      "effort": 2,
+      "dependencies": [
+        "cleanup_artifacts"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'verify system after cleanup'",
+        "cwd": ".",
+        "timeout_sec": 900
+      }
+    }
+  ]
+}

@@ -22,7 +22,12 @@ from .deep_research import (
     synthesize_paper_strategy,
 )
 from .diagram_workflow import init_model_diagram_pack
-from .generic_priority_loop import list_generic_priority_tasks, run_generic_priority_loop
+from .generic_priority_loop import (
+    init_generic_priority_plan,
+    list_generic_priority_plan_templates,
+    list_generic_priority_tasks,
+    run_generic_priority_loop,
+)
 from .optimization_loop import run_optimization_loop
 from .paper_doctor import run_paper_doctor
 from .review import generate_daily_review, generate_weekly_summary
@@ -791,6 +796,25 @@ async def list_tools() -> List[Tool]:
                     "include_completed": {"type": "boolean", "description": "是否包含已完成任务（默认 true）"},
                 },
                 "required": ["workspace_dir", "plan_path"],
+            },
+        ),
+        Tool(
+            name="list_generic_priority_plan_templates",
+            description="列出内置通用优先级计划模板。",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="init_generic_priority_plan",
+            description="基于内置模板初始化计划文件（plan.json）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workspace_dir": {"type": "string", "description": "工作目录（必填）"},
+                    "template_name": {"type": "string", "description": "模板名（必填）"},
+                    "output_path": {"type": "string", "description": "输出路径（默认 plan.json）"},
+                    "force": {"type": "boolean", "description": "目标已存在时是否覆盖（默认 false）"},
+                },
+                "required": ["workspace_dir", "template_name"],
             },
         ),
         Tool(
@@ -1688,6 +1712,25 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             workspace_dir=str(workspace_dir),
             plan_path=str(plan_path),
             include_completed=_as_bool(arguments.get("include_completed"), True),
+        )
+        return _dump(data)
+
+    if name == "list_generic_priority_plan_templates":
+        data = list_generic_priority_plan_templates()
+        return _dump(data)
+
+    if name == "init_generic_priority_plan":
+        workspace_dir = arguments.get("workspace_dir")
+        template_name = arguments.get("template_name")
+        if not workspace_dir:
+            raise ValueError("workspace_dir 不能为空")
+        if not template_name:
+            raise ValueError("template_name 不能为空")
+        data = init_generic_priority_plan(
+            workspace_dir=str(workspace_dir),
+            template_name=str(template_name),
+            output_path=str(arguments.get("output_path") or "plan.json"),
+            force=_as_bool(arguments.get("force"), False),
         )
         return _dump(data)
 

@@ -1,0 +1,59 @@
+{
+  "tasks": [
+    {
+      "id": "analyze_requirements",
+      "title": "梳理需求与边界",
+      "impact": 10,
+      "effort": 2,
+      "dependencies": [],
+      "action": {
+        "type": "noop"
+      }
+    },
+    {
+      "id": "implement_core",
+      "title": "实现核心改动",
+      "impact": 9,
+      "effort": 5,
+      "dependencies": [
+        "analyze_requirements"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'implement core changes'",
+        "cwd": ".",
+        "timeout_sec": 1800
+      }
+    },
+    {
+      "id": "run_tests",
+      "title": "执行测试回归",
+      "impact": 9,
+      "effort": 3,
+      "dependencies": [
+        "implement_core"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'run test suite'",
+        "cwd": ".",
+        "timeout_sec": 1800
+      }
+    },
+    {
+      "id": "write_docs",
+      "title": "更新说明文档",
+      "impact": 7,
+      "effort": 2,
+      "dependencies": [
+        "run_tests"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'update docs'",
+        "cwd": ".",
+        "timeout_sec": 600
+      }
+    }
+  ]
+}

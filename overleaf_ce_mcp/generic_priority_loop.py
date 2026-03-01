@@ -9,6 +9,22 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+PKG_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = PKG_DIR.parent
+
+
+def _template_root() -> Path:
+    candidates = [
+        (PKG_DIR / "templates" / "priority-plan").resolve(),
+        (PROJECT_ROOT / "templates" / "priority-plan").resolve(),
+        (Path.cwd() / "templates" / "priority-plan").resolve(),
+    ]
+    for c in candidates:
+        if c.exists() and c.is_dir():
+            return c
+    return candidates[0]
+
+
 def _loop_root(workspace_root: Path) -> Path:
     p = workspace_root / ".codex" / "priority-loop"
     p.mkdir(parents=True, exist_ok=True)
@@ -299,3 +315,44 @@ def run_generic_priority_loop(
     payload["paths"] = _write_run_reports(root, payload)
     return payload
 
+
+def list_generic_priority_plan_templates() -> Dict[str, Any]:
+    root = _template_root()
+    out: List[Dict[str, str]] = []
+    if root.exists() and root.is_dir():
+        for fp in sorted(root.glob("*.json")):
+            name = fp.stem
+            out.append({"name": name, "path": str(fp)})
+    return {"ok": True, "template_root": str(root), "count": len(out), "templates": out}
+
+
+def init_generic_priority_plan(
+    workspace_dir: str,
+    template_name: str,
+    output_path: str = "plan.json",
+    force: bool = False,
+) -> Dict[str, Any]:
+    ws = Path(workspace_dir).expanduser().resolve()
+    if not ws.exists() or not ws.is_dir():
+        raise ValueError(f"workspace_dir 不是有效目录: {ws}")
+    tname = str(template_name or "").strip()
+    if not tname:
+        raise ValueError("template_name 不能为空")
+    src = _template_root() / f"{tname}.json"
+    if not src.exists() or not src.is_file():
+        raise ValueError(f"模板不存在: {tname}")
+
+    out = Path(output_path).expanduser()
+    if not out.is_absolute():
+        out = (ws / out).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists() and not force:
+        raise ValueError(f"目标文件已存在（可传 force=true 覆盖）: {out}")
+    out.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    return {
+        "ok": True,
+        "workspace_dir": str(ws),
+        "template_name": tname,
+        "template_path": str(src),
+        "plan_path": str(out),
+    }

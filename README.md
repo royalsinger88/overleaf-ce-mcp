@@ -111,6 +111,8 @@ docker run --rm -it \
 - `run_paper_doctor`: 校验 `paper_state/inputs` 规范并给出修复建议
 - `list_upgrade_tasks`: 查看六项改造任务的优先级队列
 - `run_priority_upgrade_loop`: 按优先级循环执行改造任务（支持断点续跑）
+- `list_generic_priority_plan_templates`: 列出内置通用计划模板
+- `init_generic_priority_plan`: 从模板初始化 `plan.json`
 - `list_generic_priority_tasks`: 读取任意任务计划（JSON）并给出优先级队列
 - `run_generic_priority_loop`: 执行通用优先级循环（可 dry-run / resume / shell）
 - `generate_daily_review`: 生成每日复盘（自动汇总当日轮次与证据）
@@ -297,6 +299,12 @@ export S2_API_KEY="your_semantic_scholar_key"
 ## 8.4 通用优先级循环（跨项目复用）
 
 你可以在任意工作目录放一个 `plan.json`，然后运行通用循环。
+
+也可以直接用内置模板初始化：
+- `dev-feature-cycle`
+- `data-analysis-cycle`
+- `docs-quality-cycle`
+- `ops-maintenance-cycle`
 
 示例 `plan.json`：
 

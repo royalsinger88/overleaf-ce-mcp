@@ -1,0 +1,62 @@
+{
+  "tasks": [
+    {
+      "id": "validate_input_data",
+      "title": "校验输入数据质量",
+      "impact": 10,
+      "effort": 3,
+      "dependencies": [],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'validate data schema and null ratio'",
+        "cwd": ".",
+        "timeout_sec": 1200
+      }
+    },
+    {
+      "id": "run_baseline",
+      "title": "运行基线分析",
+      "impact": 9,
+      "effort": 4,
+      "dependencies": [
+        "validate_input_data"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'run baseline analysis'",
+        "cwd": ".",
+        "timeout_sec": 1800
+      }
+    },
+    {
+      "id": "run_ablation",
+      "title": "运行消融分析",
+      "impact": 8,
+      "effort": 5,
+      "dependencies": [
+        "run_baseline"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'run ablation study'",
+        "cwd": ".",
+        "timeout_sec": 2400
+      }
+    },
+    {
+      "id": "generate_report",
+      "title": "输出分析报告",
+      "impact": 8,
+      "effort": 2,
+      "dependencies": [
+        "run_ablation"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'generate report artifacts'",
+        "cwd": ".",
+        "timeout_sec": 600
+      }
+    }
+  ]
+}

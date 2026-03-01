@@ -1,0 +1,59 @@
+{
+  "tasks": [
+    {
+      "id": "collect_doc_sources",
+      "title": "收集现有文档与变更点",
+      "impact": 9,
+      "effort": 2,
+      "dependencies": [],
+      "action": {
+        "type": "noop"
+      }
+    },
+    {
+      "id": "update_core_docs",
+      "title": "更新核心文档",
+      "impact": 9,
+      "effort": 3,
+      "dependencies": [
+        "collect_doc_sources"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'update core docs'",
+        "cwd": ".",
+        "timeout_sec": 1200
+      }
+    },
+    {
+      "id": "check_examples",
+      "title": "校验示例命令和路径",
+      "impact": 8,
+      "effort": 3,
+      "dependencies": [
+        "update_core_docs"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'verify examples'",
+        "cwd": ".",
+        "timeout_sec": 1200
+      }
+    },
+    {
+      "id": "publish_changelog",
+      "title": "整理发布变更摘要",
+      "impact": 7,
+      "effort": 2,
+      "dependencies": [
+        "check_examples"
+      ],
+      "action": {
+        "type": "shell",
+        "cmd": "echo 'publish changelog'",
+        "cwd": ".",
+        "timeout_sec": 600
+      }
+    }
+  ]
+}
