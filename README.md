@@ -81,7 +81,8 @@ docker run --rm -it \
 - `ols_login`: 执行 Overleaf 登录并生成 `.olauth`
 - `ols_list_projects`: 列出账号项目
 - `ols_sync`: 双向/单向同步本地项目目录
-- `init_manuscript_from_template`: 初始化模板稿件目录
+- `init_manuscript_from_template`: 初始化模板稿件目录（默认包含 `paper_state`）
+- `init_paper_state_workspace`: 在已有项目中补建 `paper_state` 状态目录
 - `write_file`: 写入或覆盖文本文件
 - `compile_latex`: 本地调用 `latexmk` 编译
 - `package_project_zip`: 打包项目目录
@@ -89,12 +90,22 @@ docker run --rm -it \
 - `upload_project_dir`: 将本地目录按通用规则打包后上传到 CE（创建新项目或覆盖已有项目）
 - `health_check_project`: 检查项目可见性与可编译性
 - `apply_compat_patches`: 手动触发兼容补丁（通常无需手动执行）
-- `search_academic_papers`: 检索论文（arXiv + Semantic Scholar 官方 API）
+- `search_academic_papers`: 检索论文（默认 arXiv + OpenAlex + Crossref，可选 Semantic Scholar）
+- `list_academic_source_capabilities`: 列出检索适配器能力和可用状态
+- `fetch_paper_fulltext`: 按回退链拉取论文可用文本（OA/元数据/摘要）
+- `sync_zotero_paper_state`: `paper_state` 与 Zotero 同步（pull/push/bidirectional，支持 dry-run）
+- `letpub_search_journals`: 通过 LetPub 检索期刊关键信息
+- `letpub_get_journal_detail`: 抓取 LetPub 期刊详情字段（IF/JCR/审稿速度/OA/投稿网址等）
 - `build_related_work_pack`: 生成相关工作素材包（论文清单 + 综述草稿 + BibTeX 草稿）
+- `list_journal_presets`: 列出内置期刊/会议预设分组
+- `search_in_journal_preset`: 在预设期刊分组中检索论文
+- `recommend_target_journals`: 基于主题与检索结果优选投稿期刊
+- `verify_reference`: 核验参考文献真伪并输出修正 BibTeX
 - `generate_deep_research_prompt`: 生成 GPT 网页版深度研究提示词
 - `generate_deep_research_prompt_set`: 生成多组深度研究提示词（R1/R2 迭代）
 - `ingest_deep_research_report`: 将深度研究报告转为参考资料包（URL/DOI/arXiv/BibTeX）
 - `synthesize_paper_strategy`: 综合多轮研究结果，给出题目/创新点/写作侧重点
+- `run_optimization_loop`: 执行受控循环优化并自动沉淀轮次产物（支持停止条件）
 - `init_model_diagram_pack`: 生成模型结构图生产包（真值拓扑 + Nano Banana Pro 提示词）
 
 ## 4. 模板
@@ -104,6 +115,41 @@ docker run --rm -it \
 
 模板位置：
 - `templates/ocean-engineering-oa`
+
+### `paper_state` 工作区（默认生成）
+
+初始化模板后会自动创建：
+
+```text
+paper_state/
+  inputs/
+    project.yaml
+    writing_brief.md
+    submission_target.yaml
+    constraints.yaml
+    loop.yaml
+    literature/
+      seed_queries.yaml
+      reading_queue.csv
+      refs_raw.bib
+    experiments/
+      registry.csv
+      metrics/
+      notes/
+  outputs/
+  review/
+    daily/
+    weekly/
+  memory/
+    claim_evidence.jsonl
+```
+
+推荐格式：
+- `yaml`：目标、约束、参数
+- `csv/parquet`：实验数据与指标
+- `md`：思路、复盘、解释
+- `bib`：参考文献
+- `jsonl`：结论-证据账本
 
 ## 5. 通用上传说明
 
@@ -154,11 +200,22 @@ docker run --rm -it \
 
 新增检索工具：
 - `search_academic_papers`
+- `letpub_search_journals`
+- `letpub_get_journal_detail`
 - `build_related_work_pack`
+- `list_journal_presets`
+- `search_in_journal_preset`
+- `recommend_target_journals`
+- `verify_reference`
 
 推荐配置：
 - 默认 `source=all`：走 `arXiv + OpenAlex + Crossref`，无需任何 API Key
+- 可先调 `list_academic_source_capabilities`，由能力清单自动决定检索编排
 - 需要 Semantic Scholar 时：可选配置 `S2_API_KEY`
+- 需要“投稿期刊优选”时：先 `list_journal_presets`，再 `recommend_target_journals`
+- 需要“引用防幻觉”时：用 `verify_reference` 对标题/DOI 做核验
+- 需要“正文抓取”时：用 `fetch_paper_fulltext`，按 `Unpaywall -> OpenAlex DOI -> Crossref DOI -> arXiv -> URL -> 标题检索` 回退
+- 需要“文献库沉淀”时：用 `sync_zotero_paper_state`
 
 示例（环境变量）：
 
@@ -176,6 +233,25 @@ export S2_API_KEY="your_semantic_scholar_key"
 4. 如有不确定点，再用 `generate_deep_research_prompt_set(round_stage=r2)` 生成 R2 提示词并重复。  
 5. 用 `synthesize_paper_strategy` 得出题目候选、创新点与写作侧重点。  
 6. 将 BibTeX 草稿合并到 `references.bib`，并据此改写引言/相关工作。  
+
+## 8.1 受控循环优化（拉尔夫循环）
+
+推荐直接调用 `run_optimization_loop`，默认读取：
+- `paper_state/inputs/loop.yaml`
+- `paper_state/inputs/writing_brief.md`
+
+每轮自动产出：
+- `paper_state/outputs/optimization_loop/round_XX/round_result.json`
+- `paper_state/outputs/optimization_loop/round_XX/round_summary.md`
+- `paper_state/outputs/optimization_loop/loop_summary.json`
+- `paper_state/outputs/optimization_loop/loop_summary.md`
+- `paper_state/review/daily/YYYY-MM-DD.md`（可选）
+- `paper_state/memory/claim_evidence.jsonl`（可选）
+
+停止条件（可配）：
+- 达到目标分数 `target_score`
+- 连续 `patience` 轮提升低于 `min_score_improvement`
+- 连续 `patience` 轮无新增证据
 
 ## 9. 模型结构图协同（Nano Banana Pro）
 

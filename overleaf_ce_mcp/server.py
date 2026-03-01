@@ -22,9 +22,22 @@ from .deep_research import (
     synthesize_paper_strategy,
 )
 from .diagram_workflow import init_model_diagram_pack
+from .optimization_loop import run_optimization_loop
 from .sync import command_exists, ols_list, ols_login, ols_sync, run_command
-from .scholar import build_related_work_pack, search_academic_papers
-from .template import init_template_project, list_templates
+from .scholar import (
+    build_related_work_pack,
+    fetch_paper_fulltext,
+    letpub_get_journal_detail,
+    letpub_search_journals,
+    list_academic_source_capabilities,
+    list_journal_presets,
+    recommend_target_journals,
+    search_academic_papers,
+    search_in_journal_preset,
+    sync_zotero_paper_state,
+    verify_reference,
+)
+from .template import init_paper_state_workspace, init_template_project, list_templates
 from .upload import (
     find_project_by_name,
     health_check_project,
@@ -149,7 +162,7 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="init_manuscript_from_template",
-            description="按模板初始化论文目录，当前内置 ocean-engineering-oa。",
+            description="按模板初始化论文目录，默认同时生成 paper_state 状态工作区。",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -159,8 +172,25 @@ async def list_tools() -> List[Tool]:
                     "authors": {"type": "string", "description": "作者字符串（逗号分隔）"},
                     "corresponding_email": {"type": "string", "description": "通讯作者邮箱"},
                     "keywords": {"type": "string", "description": "关键词字符串（逗号分隔）"},
+                    "init_paper_state": {"type": "boolean", "description": "是否初始化 paper_state（默认 true）"},
                 },
                 "required": ["target_dir"],
+            },
+        ),
+        Tool(
+            name="init_paper_state_workspace",
+            description="在已有论文目录中初始化/补建 paper_state 状态工作区。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "title": {"type": "string", "description": "论文标题（可选）"},
+                    "authors": {"type": "string", "description": "作者（可选）"},
+                    "corresponding_email": {"type": "string", "description": "通讯作者邮箱（可选）"},
+                    "keywords": {"type": "string", "description": "关键词（可选）"},
+                    "force": {"type": "boolean", "description": "存在文件是否覆盖（默认 false）"},
+                },
+                "required": ["project_dir"],
             },
         ),
         Tool(
@@ -287,6 +317,87 @@ async def list_tools() -> List[Tool]:
             },
         ),
         Tool(
+            name="list_academic_source_capabilities",
+            description="列出学术数据源适配器能力与启用状态（用于检索策略编排）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "s2_api_key": {"type": "string", "description": "可选：用于判断 Semantic Scholar 是否可用"},
+                },
+            },
+        ),
+        Tool(
+            name="fetch_paper_fulltext",
+            description="按回退链获取论文可用文本（Unpaywall -> OpenAlex DOI -> Crossref DOI -> arXiv -> URL -> 标题检索）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "论文标题（可选）"},
+                    "doi": {"type": "string", "description": "DOI（可选）"},
+                    "arxiv_id": {"type": "string", "description": "arXiv ID（可选）"},
+                    "url": {"type": "string", "description": "论文 URL（可选）"},
+                    "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
+                    "unpaywall_email": {"type": "string", "description": "Unpaywall 邮箱（可选，不传则读 UNPAYWALL_EMAIL）"},
+                    "s2_api_key": {"type": "string", "description": "可选，仅标题检索回退时需要"},
+                },
+            },
+        ),
+        Tool(
+            name="sync_zotero_paper_state",
+            description="将 paper_state 与 Zotero 同步（pull/push/bidirectional，支持 dry-run）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "direction": {
+                        "type": "string",
+                        "enum": ["pull", "push", "bidirectional"],
+                        "description": "同步方向（默认 pull）",
+                    },
+                    "library_id": {"type": "string", "description": "Zotero library id（可选，不传读环境变量）"},
+                    "api_key": {"type": "string", "description": "Zotero API key（可选，不传读环境变量）"},
+                    "library_type": {
+                        "type": "string",
+                        "enum": ["user", "group"],
+                        "description": "Zotero 库类型（默认 user）",
+                    },
+                    "limit": {"type": "integer", "description": "条目上限（默认 50）"},
+                    "query": {"type": "string", "description": "Zotero pull 检索词（可选）"},
+                    "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
+                    "dry_run": {"type": "boolean", "description": "是否仅预演（默认 true）"},
+                },
+                "required": ["project_dir"],
+            },
+        ),
+        Tool(
+            name="letpub_search_journals",
+            description="通过 LetPub 期刊搜索页检索期刊，并返回 LetPub 评分/IF/h-index/OA 等关键字段。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "searchname": {"type": "string", "description": "期刊名关键词（与 searchissn 至少一项）"},
+                    "searchissn": {"type": "string", "description": "ISSN（与 searchname 至少一项）"},
+                    "searchfield": {"type": "string", "description": "研究方向关键词（可选）"},
+                    "searchimpactlow": {"type": "string", "description": "影响因子下限（可选）"},
+                    "searchimpacthigh": {"type": "string", "description": "影响因子上限（可选）"},
+                    "max_items": {"type": "integer", "description": "最大返回条数（默认30，最大100）"},
+                    "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
+                },
+            },
+        ),
+        Tool(
+            name="letpub_get_journal_detail",
+            description="抓取 LetPub 期刊详情页（journalid）并提取投稿相关关键字段。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "journalid": {"type": "string", "description": "期刊ID（必填，如 7412）"},
+                    "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
+                },
+                "required": ["journalid"],
+            },
+        ),
+        Tool(
             name="build_related_work_pack",
             description="为论文写作生成“相关工作素材包”（默认无 Key 来源；含候选论文、综述草稿、BibTeX 草稿）。",
             inputSchema={
@@ -313,6 +424,67 @@ async def list_tools() -> List[Tool]:
                     },
                 },
                 "required": ["query"],
+            },
+        ),
+        Tool(
+            name="list_journal_presets",
+            description="列出内置期刊/会议预设分组（用于快速期刊筛选与优选）。",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="search_in_journal_preset",
+            description="在内置期刊/会议预设中检索论文（适合快速验证投稿方向匹配度）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "检索词（必填）"},
+                    "journal_preset": {"type": "string", "description": "预设键（必填，如 top_ai_conferences）"},
+                    "source": {
+                        "type": "string",
+                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar"],
+                        "description": "检索来源，默认 all",
+                    },
+                    "max_results_per_source": {"type": "integer", "description": "每源返回上限（默认 12）"},
+                    "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
+                    "s2_api_key": {"type": "string", "description": "可选，仅需启用 Semantic Scholar 时传入"},
+                },
+                "required": ["query", "journal_preset"],
+            },
+        ),
+        Tool(
+            name="recommend_target_journals",
+            description="基于当前主题检索结果与内置期刊预设，给出投稿期刊优选建议。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "研究主题（必填）"},
+                    "target_preference": {
+                        "type": "string",
+                        "enum": ["any", "oa", "non_oa"],
+                        "description": "偏好：any/oa/non_oa",
+                    },
+                    "max_candidates": {"type": "integer", "description": "返回候选数（默认 5，范围 3-10）"},
+                    "max_results_per_source": {"type": "integer", "description": "每源检索上限（默认 10）"},
+                    "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
+                    "s2_api_key": {"type": "string", "description": "可选，仅需启用 Semantic Scholar 时传入"},
+                },
+                "required": ["topic"],
+            },
+        ),
+        Tool(
+            name="verify_reference",
+            description="核验参考文献真伪与匹配度（Crossref/多源检索），并返回修正 BibTeX 草稿。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "文献标题（可选，title/doi 至少一项）"},
+                    "authors": {"type": "array", "items": {"type": "string"}, "description": "作者列表（可选）"},
+                    "year": {"type": "integer", "description": "年份（可选）"},
+                    "doi": {"type": "string", "description": "DOI（可选，title/doi 至少一项）"},
+                    "venue": {"type": "string", "description": "期刊/会议名（可选）"},
+                    "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
+                    "s2_api_key": {"type": "string", "description": "可选，仅需启用 Semantic Scholar 时传入"},
+                },
             },
         ),
         Tool(
@@ -397,6 +569,58 @@ async def list_tools() -> List[Tool]:
                     "candidate_title_count": {"type": "integer", "description": "候选标题数量（默认6，3-10）"},
                 },
                 "required": ["topic"],
+            },
+        ),
+        Tool(
+            name="run_optimization_loop",
+            description="执行受控优化循环（R1/R2 迭代），并将中间产物写入 paper_state。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "loop_config_path": {
+                        "type": "string",
+                        "description": "循环配置文件路径（可选，默认 paper_state/inputs/loop.yaml）",
+                    },
+                    "topic": {"type": "string", "description": "研究主题（可选，未传则尝试从 project.yaml 读取）"},
+                    "known_data": {"type": "string", "description": "已有数据/事实（可选）"},
+                    "writing_direction": {"type": "string", "description": "写作方向（可选）"},
+                    "baseline_models": {"type": "array", "items": {"type": "string"}, "description": "baseline 模型列表"},
+                    "improvement_modules": {"type": "array", "items": {"type": "string"}, "description": "改进模块列表"},
+                    "target_journal": {"type": "string", "description": "目标期刊（可选）"},
+                    "constraints": {"type": "string", "description": "约束条件（可选）"},
+                    "query": {"type": "string", "description": "检索 query（可选）"},
+                    "source": {
+                        "type": "string",
+                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar"],
+                        "description": "检索来源（默认 all）",
+                    },
+                    "max_rounds": {"type": "integer", "description": "最大循环轮数（默认 4）"},
+                    "min_score_improvement": {"type": "number", "description": "最小有效提升阈值（默认 0.03）"},
+                    "patience": {"type": "integer", "description": "连续无增益容忍轮数（默认 2）"},
+                    "target_score": {"type": "number", "description": "达到即停止的目标分数（默认 0.85）"},
+                    "max_results_per_source": {"type": "integer", "description": "每源检索上限（默认 10）"},
+                    "max_items_for_note": {"type": "integer", "description": "相关工作草稿用条目数（默认 8）"},
+                    "num_prompts": {"type": "integer", "description": "每轮提示词组数（默认 6）"},
+                    "timeout": {"type": "integer", "description": "检索超时秒数（默认 30）"},
+                    "s2_api_key": {"type": "string", "description": "可选，仅需启用 Semantic Scholar 时传入"},
+                    "enable_journal_recommendation": {
+                        "type": "boolean",
+                        "description": "是否启用投稿期刊优选（默认 true）",
+                    },
+                    "target_preference": {
+                        "type": "string",
+                        "enum": ["any", "oa", "non_oa"],
+                        "description": "投稿偏好（默认 any）",
+                    },
+                    "max_candidates": {"type": "integer", "description": "期刊候选数量（默认 5）"},
+                    "write_daily_review": {"type": "boolean", "description": "是否写入每日复盘（默认 true）"},
+                    "append_claim_evidence": {
+                        "type": "boolean",
+                        "description": "是否写入 claim_evidence 候选证据（默认 true）",
+                    },
+                },
+                "required": ["project_dir"],
             },
         ),
         Tool(
@@ -524,6 +748,23 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             authors=arguments.get("authors"),
             corresponding_email=arguments.get("corresponding_email"),
             keywords=arguments.get("keywords"),
+            init_paper_state=_as_bool(arguments.get("init_paper_state"), True),
+        )
+        return _dump({"ok": True, "data": data})
+
+    if name == "init_paper_state_workspace":
+        project_dir = arguments.get("project_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        data = init_paper_state_workspace(
+            project_dir=str(project_dir),
+            title=str(arguments.get("title")) if arguments.get("title") else None,
+            authors=str(arguments.get("authors")) if arguments.get("authors") else None,
+            corresponding_email=(
+                str(arguments.get("corresponding_email")) if arguments.get("corresponding_email") else None
+            ),
+            keywords=str(arguments.get("keywords")) if arguments.get("keywords") else None,
+            force=_as_bool(arguments.get("force"), False),
         )
         return _dump({"ok": True, "data": data})
 
@@ -825,6 +1066,70 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
         )
         return _dump(data)
 
+    if name == "list_academic_source_capabilities":
+        s2_api_key = arguments.get("s2_api_key")
+        timeout = _as_int(arguments.get("timeout"), 30)
+        data = list_academic_source_capabilities(
+            s2_api_key=str(s2_api_key) if s2_api_key else None,
+            timeout=timeout,
+        )
+        return _dump(data)
+
+    if name == "fetch_paper_fulltext":
+        data = fetch_paper_fulltext(
+            title=str(arguments.get("title")) if arguments.get("title") else None,
+            doi=str(arguments.get("doi")) if arguments.get("doi") else None,
+            arxiv_id=str(arguments.get("arxiv_id")) if arguments.get("arxiv_id") else None,
+            url=str(arguments.get("url")) if arguments.get("url") else None,
+            timeout=_as_int(arguments.get("timeout"), 30),
+            unpaywall_email=str(arguments.get("unpaywall_email")) if arguments.get("unpaywall_email") else None,
+            s2_api_key=str(arguments.get("s2_api_key")) if arguments.get("s2_api_key") else None,
+        )
+        return _dump(data)
+
+    if name == "sync_zotero_paper_state":
+        project_dir = arguments.get("project_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        data = sync_zotero_paper_state(
+            project_dir=str(project_dir),
+            direction=str(arguments.get("direction") or "pull"),
+            library_id=str(arguments.get("library_id")) if arguments.get("library_id") else None,
+            api_key=str(arguments.get("api_key")) if arguments.get("api_key") else None,
+            library_type=str(arguments.get("library_type") or "user"),
+            limit=_as_int(arguments.get("limit"), 50),
+            query=str(arguments.get("query")) if arguments.get("query") else None,
+            timeout=_as_int(arguments.get("timeout"), 30),
+            dry_run=_as_bool(arguments.get("dry_run"), True),
+        )
+        return _dump(data)
+
+    if name == "letpub_search_journals":
+        searchname = str(arguments.get("searchname") or "")
+        searchissn = str(arguments.get("searchissn") or "")
+        if not searchname and not searchissn:
+            raise ValueError("searchname 和 searchissn 至少提供一个")
+        timeout = _as_int(arguments.get("timeout"), 30)
+        max_items = _as_int(arguments.get("max_items"), 30)
+        data = letpub_search_journals(
+            searchname=searchname,
+            searchissn=searchissn,
+            searchfield=str(arguments.get("searchfield") or ""),
+            searchimpactlow=str(arguments.get("searchimpactlow") or ""),
+            searchimpacthigh=str(arguments.get("searchimpacthigh") or ""),
+            timeout=timeout,
+            max_items=max_items,
+        )
+        return _dump(data)
+
+    if name == "letpub_get_journal_detail":
+        journalid = arguments.get("journalid")
+        if not journalid:
+            raise ValueError("journalid 不能为空")
+        timeout = _as_int(arguments.get("timeout"), 30)
+        data = letpub_get_journal_detail(journalid=str(journalid), timeout=timeout)
+        return _dump(data)
+
     if name == "build_related_work_pack":
         query = arguments.get("query")
         if not query:
@@ -839,6 +1144,71 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             source=source,
             max_results_per_source=max_results,
             max_items_for_note=max_items,
+            timeout=timeout,
+            s2_api_key=str(s2_api_key) if s2_api_key else None,
+        )
+        return _dump(data)
+
+    if name == "list_journal_presets":
+        return _dump(list_journal_presets())
+
+    if name == "search_in_journal_preset":
+        query = arguments.get("query")
+        preset = arguments.get("journal_preset")
+        if not query:
+            raise ValueError("query 不能为空")
+        if not preset:
+            raise ValueError("journal_preset 不能为空")
+        source = str(arguments.get("source", "all"))
+        max_results = _as_int(arguments.get("max_results_per_source"), 12)
+        timeout = _as_int(arguments.get("timeout"), 30)
+        s2_api_key = arguments.get("s2_api_key")
+        data = search_in_journal_preset(
+            query=str(query),
+            journal_preset=str(preset),
+            source=source,
+            max_results_per_source=max_results,
+            timeout=timeout,
+            s2_api_key=str(s2_api_key) if s2_api_key else None,
+        )
+        return _dump(data)
+
+    if name == "recommend_target_journals":
+        topic = arguments.get("topic")
+        if not topic:
+            raise ValueError("topic 不能为空")
+        target_preference = str(arguments.get("target_preference") or "any")
+        max_candidates = _as_int(arguments.get("max_candidates"), 5)
+        max_results = _as_int(arguments.get("max_results_per_source"), 10)
+        timeout = _as_int(arguments.get("timeout"), 30)
+        s2_api_key = arguments.get("s2_api_key")
+        data = recommend_target_journals(
+            topic=str(topic),
+            target_preference=target_preference,
+            max_candidates=max_candidates,
+            max_results_per_source=max_results,
+            timeout=timeout,
+            s2_api_key=str(s2_api_key) if s2_api_key else None,
+        )
+        return _dump(data)
+
+    if name == "verify_reference":
+        title = arguments.get("title")
+        doi = arguments.get("doi")
+        if not title and not doi:
+            raise ValueError("title 和 doi 至少提供一个")
+        timeout = _as_int(arguments.get("timeout"), 30)
+        s2_api_key = arguments.get("s2_api_key")
+        year_raw = arguments.get("year")
+        year_val = _as_int(year_raw, 0) if year_raw is not None else None
+        if year_val is not None and year_val <= 0:
+            year_val = None
+        data = verify_reference(
+            title=str(title) if title else None,
+            authors=arguments.get("authors"),
+            year=year_val,
+            doi=str(doi) if doi else None,
+            venue=str(arguments.get("venue")) if arguments.get("venue") else None,
             timeout=timeout,
             s2_api_key=str(s2_api_key) if s2_api_key else None,
         )
@@ -944,6 +1314,41 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             report_summaries=arguments.get("report_summaries"),
             constraints=str(arguments.get("constraints")) if arguments.get("constraints") else None,
             candidate_title_count=_as_int(arguments.get("candidate_title_count"), 6),
+        )
+        return _dump(data)
+
+    if name == "run_optimization_loop":
+        project_dir = arguments.get("project_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        data = run_optimization_loop(
+            project_dir=str(project_dir),
+            loop_config_path=str(arguments.get("loop_config_path")) if arguments.get("loop_config_path") else None,
+            topic=str(arguments.get("topic")) if arguments.get("topic") else None,
+            known_data=str(arguments.get("known_data")) if arguments.get("known_data") else None,
+            writing_direction=(
+                str(arguments.get("writing_direction")) if arguments.get("writing_direction") else None
+            ),
+            baseline_models=arguments.get("baseline_models"),
+            improvement_modules=arguments.get("improvement_modules"),
+            target_journal=str(arguments.get("target_journal")) if arguments.get("target_journal") else None,
+            constraints=str(arguments.get("constraints")) if arguments.get("constraints") else None,
+            query=str(arguments.get("query")) if arguments.get("query") else None,
+            source=str(arguments.get("source")) if arguments.get("source") else None,
+            max_rounds=arguments.get("max_rounds"),
+            min_score_improvement=arguments.get("min_score_improvement"),
+            patience=arguments.get("patience"),
+            target_score=arguments.get("target_score"),
+            max_results_per_source=arguments.get("max_results_per_source"),
+            max_items_for_note=arguments.get("max_items_for_note"),
+            num_prompts=arguments.get("num_prompts"),
+            timeout=arguments.get("timeout"),
+            s2_api_key=str(arguments.get("s2_api_key")) if arguments.get("s2_api_key") else None,
+            enable_journal_recommendation=arguments.get("enable_journal_recommendation"),
+            target_preference=str(arguments.get("target_preference")) if arguments.get("target_preference") else None,
+            max_candidates=arguments.get("max_candidates"),
+            write_daily_review=arguments.get("write_daily_review"),
+            append_claim_evidence=arguments.get("append_claim_evidence"),
         )
         return _dump(data)
 
