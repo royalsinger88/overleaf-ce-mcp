@@ -107,6 +107,7 @@ docker run --rm -it \
 - `ingest_deep_research_report`: 将深度研究报告转为参考资料包（URL/DOI/arXiv/BibTeX）
 - `synthesize_paper_strategy`: 综合多轮研究结果，给出题目/创新点/写作侧重点
 - `run_optimization_loop`: 执行受控循环优化并自动沉淀轮次产物（支持停止条件）
+- `run_paper_cycle`: 一键执行优化循环 + 日报 +（按策略）周报
 - `generate_daily_review`: 生成每日复盘（自动汇总当日轮次与证据）
 - `generate_weekly_summary`: 生成每周总结（自动聚合日报与证据）
 - `init_model_diagram_pack`: 生成模型结构图生产包（真值拓扑 + Nano Banana Pro 提示词）
@@ -261,6 +262,20 @@ export S2_API_KEY="your_semantic_scholar_key"
 - 每天结束执行 `generate_daily_review`
 - 每周执行 `generate_weekly_summary`
 - 结果会回写 `paper_state/memory/review_state.json`，便于下一轮循环读取上下文
+
+## 8.2 一键论文循环（低摩擦入口）
+
+推荐直接调用 `run_paper_cycle`：
+- 默认从 `paper_state/inputs` 读取素材与配置
+- 默认执行：`optimization_loop + daily_review`
+- `weekly_mode=auto` 时仅在周五自动补 `weekly_summary`
+
+常用参数：
+- `project_dir`（必填）
+- `day`（可选，`YYYY-MM-DD`）
+- `weekly_mode`：`auto` / `always` / `never`
+- `run_loop`、`run_daily`
+- `overwrite_reviews`、`write_state`
 
 ## 9. 模型结构图协同（Nano Banana Pro）
 

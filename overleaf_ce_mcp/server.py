@@ -46,6 +46,7 @@ from .upload import (
     package_project_for_upload,
     upload_zip_as_new_project,
 )
+from .workflow import run_paper_cycle
 
 
 server = Server("overleaf-ce-mcp")
@@ -635,6 +636,68 @@ async def list_tools() -> List[Tool]:
                     },
                     "max_candidates": {"type": "integer", "description": "期刊候选数量（默认 5）"},
                     "write_daily_review": {"type": "boolean", "description": "是否写入每日复盘（默认 true）"},
+                    "append_claim_evidence": {
+                        "type": "boolean",
+                        "description": "是否写入 claim_evidence 候选证据（默认 true）",
+                    },
+                },
+                "required": ["project_dir"],
+            },
+        ),
+        Tool(
+            name="run_paper_cycle",
+            description="一键执行论文循环：优化循环 + 日报 +（可选）周报。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "day": {"type": "string", "description": "目标日期 YYYY-MM-DD（默认当天）"},
+                    "weekly_mode": {
+                        "type": "string",
+                        "enum": ["auto", "always", "never"],
+                        "description": "周报生成策略（默认 auto，周五触发）",
+                    },
+                    "run_loop": {"type": "boolean", "description": "是否执行优化循环（默认 true）"},
+                    "run_daily": {"type": "boolean", "description": "是否生成日报（默认 true）"},
+                    "overwrite_reviews": {"type": "boolean", "description": "是否覆盖同名日报/周报（默认 true）"},
+                    "write_state": {"type": "boolean", "description": "是否回写 review_state（默认 true）"},
+                    "loop_write_daily_review": {
+                        "type": "boolean",
+                        "description": "优化循环内部是否也写日报（默认 false，避免重复）",
+                    },
+                    "loop_config_path": {"type": "string", "description": "循环配置文件路径（可选）"},
+                    "topic": {"type": "string", "description": "研究主题（可选）"},
+                    "known_data": {"type": "string", "description": "已有数据/事实（可选）"},
+                    "writing_direction": {"type": "string", "description": "写作方向（可选）"},
+                    "baseline_models": {"type": "array", "items": {"type": "string"}, "description": "baseline 模型列表"},
+                    "improvement_modules": {"type": "array", "items": {"type": "string"}, "description": "改进模块列表"},
+                    "target_journal": {"type": "string", "description": "目标期刊（可选）"},
+                    "constraints": {"type": "string", "description": "约束条件（可选）"},
+                    "query": {"type": "string", "description": "检索 query（可选）"},
+                    "source": {
+                        "type": "string",
+                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar", "openreview"],
+                        "description": "检索来源（默认 all）",
+                    },
+                    "max_rounds": {"type": "integer", "description": "最大循环轮数（默认 4）"},
+                    "min_score_improvement": {"type": "number", "description": "最小有效提升阈值（默认 0.03）"},
+                    "patience": {"type": "integer", "description": "连续无增益容忍轮数（默认 2）"},
+                    "target_score": {"type": "number", "description": "达到即停止的目标分数（默认 0.85）"},
+                    "max_results_per_source": {"type": "integer", "description": "每源检索上限（默认 10）"},
+                    "max_items_for_note": {"type": "integer", "description": "相关工作草稿用条目数（默认 8）"},
+                    "num_prompts": {"type": "integer", "description": "每轮提示词组数（默认 6）"},
+                    "timeout": {"type": "integer", "description": "检索超时秒数（默认 30）"},
+                    "s2_api_key": {"type": "string", "description": "可选，仅需启用 Semantic Scholar 时传入"},
+                    "enable_journal_recommendation": {
+                        "type": "boolean",
+                        "description": "是否启用投稿期刊优选（默认 true）",
+                    },
+                    "target_preference": {
+                        "type": "string",
+                        "enum": ["any", "oa", "non_oa"],
+                        "description": "投稿偏好（默认 any）",
+                    },
+                    "max_candidates": {"type": "integer", "description": "期刊候选数量（默认 5）"},
                     "append_claim_evidence": {
                         "type": "boolean",
                         "description": "是否写入 claim_evidence 候选证据（默认 true）",
@@ -1416,6 +1479,47 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             target_preference=str(arguments.get("target_preference")) if arguments.get("target_preference") else None,
             max_candidates=arguments.get("max_candidates"),
             write_daily_review=arguments.get("write_daily_review"),
+            append_claim_evidence=arguments.get("append_claim_evidence"),
+        )
+        return _dump(data)
+
+    if name == "run_paper_cycle":
+        project_dir = arguments.get("project_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        data = run_paper_cycle(
+            project_dir=str(project_dir),
+            day=str(arguments.get("day")) if arguments.get("day") else None,
+            weekly_mode=str(arguments.get("weekly_mode") or "auto"),
+            run_loop=_as_bool(arguments.get("run_loop"), True),
+            run_daily=_as_bool(arguments.get("run_daily"), True),
+            overwrite_reviews=_as_bool(arguments.get("overwrite_reviews"), True),
+            write_state=_as_bool(arguments.get("write_state"), True),
+            loop_write_daily_review=_as_bool(arguments.get("loop_write_daily_review"), False),
+            loop_config_path=str(arguments.get("loop_config_path")) if arguments.get("loop_config_path") else None,
+            topic=str(arguments.get("topic")) if arguments.get("topic") else None,
+            known_data=str(arguments.get("known_data")) if arguments.get("known_data") else None,
+            writing_direction=(
+                str(arguments.get("writing_direction")) if arguments.get("writing_direction") else None
+            ),
+            baseline_models=arguments.get("baseline_models"),
+            improvement_modules=arguments.get("improvement_modules"),
+            target_journal=str(arguments.get("target_journal")) if arguments.get("target_journal") else None,
+            constraints=str(arguments.get("constraints")) if arguments.get("constraints") else None,
+            query=str(arguments.get("query")) if arguments.get("query") else None,
+            source=str(arguments.get("source")) if arguments.get("source") else None,
+            max_rounds=arguments.get("max_rounds"),
+            min_score_improvement=arguments.get("min_score_improvement"),
+            patience=arguments.get("patience"),
+            target_score=arguments.get("target_score"),
+            max_results_per_source=arguments.get("max_results_per_source"),
+            max_items_for_note=arguments.get("max_items_for_note"),
+            num_prompts=arguments.get("num_prompts"),
+            timeout=arguments.get("timeout"),
+            s2_api_key=str(arguments.get("s2_api_key")) if arguments.get("s2_api_key") else None,
+            enable_journal_recommendation=arguments.get("enable_journal_recommendation"),
+            target_preference=str(arguments.get("target_preference")) if arguments.get("target_preference") else None,
+            max_candidates=arguments.get("max_candidates"),
             append_claim_evidence=arguments.get("append_claim_evidence"),
         )
         return _dump(data)

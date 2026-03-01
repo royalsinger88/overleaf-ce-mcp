@@ -19,6 +19,7 @@ def test_list_tools_contains_key_entries():
     assert "letpub_get_journal_detail" in names
     assert "init_paper_state_workspace" in names
     assert "run_optimization_loop" in names
+    assert "run_paper_cycle" in names
     assert "generate_daily_review" in names
     assert "generate_weekly_summary" in names
     assert "list_academic_source_capabilities" in names
@@ -198,3 +199,25 @@ def test_execute_tool_generate_weekly_summary(monkeypatch):
     data = json.loads(text)
     assert data["ok"] is True
     assert data["week_tag"] == "2026-W09"
+
+
+def test_execute_tool_run_paper_cycle(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "run_paper_cycle",
+        lambda **kwargs: {
+            "ok": True,
+            "day": "2026-03-01",
+            "weekly_mode": "auto",
+            "executed_steps": ["optimization_loop", "daily_review"],
+        },
+    )
+    text = asyncio.run(
+        server._execute_tool(
+            "run_paper_cycle",
+            {"project_dir": "/tmp/paper-project", "day": "2026-03-01"},
+        )
+    )
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert "daily_review" in data["executed_steps"]
