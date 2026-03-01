@@ -23,6 +23,7 @@ from .deep_research import (
 )
 from .diagram_workflow import init_model_diagram_pack
 from .optimization_loop import run_optimization_loop
+from .paper_doctor import run_paper_doctor
 from .review import generate_daily_review, generate_weekly_summary
 from .sync import command_exists, ols_list, ols_login, ols_sync, run_command
 from .scholar import (
@@ -46,6 +47,7 @@ from .upload import (
     package_project_for_upload,
     upload_zip_as_new_project,
 )
+from .upgrade_loop import list_upgrade_tasks, run_priority_upgrade_loop
 from .workflow import run_paper_cycle
 
 
@@ -665,6 +667,9 @@ async def list_tools() -> List[Tool]:
                         "type": "boolean",
                         "description": "是否自动扫描 paper_state/inputs 并补齐缺省参数（默认 true）",
                     },
+                    "use_cache": {"type": "boolean", "description": "是否启用增量缓存（默认 true）"},
+                    "cache_ttl_hours": {"type": "integer", "description": "缓存有效期小时（默认 24）"},
+                    "force_refresh": {"type": "boolean", "description": "是否忽略缓存强制重算（默认 false）"},
                     "write_missing_checklist": {
                         "type": "boolean",
                         "description": "是否写入 inputs 缺失清单（默认 true）",
@@ -714,6 +719,62 @@ async def list_tools() -> List[Tool]:
                         "type": "boolean",
                         "description": "是否写入 claim_evidence 候选证据（默认 true）",
                     },
+                },
+                "required": ["project_dir"],
+            },
+        ),
+        Tool(
+            name="run_paper_doctor",
+            description="检查 paper_state 输入规范并输出可修复建议。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "write_report": {"type": "boolean", "description": "是否写报告到 outputs（默认 true）"},
+                },
+                "required": ["project_dir"],
+            },
+        ),
+        Tool(
+            name="list_upgrade_tasks",
+            description="列出改造任务优先级（支持按完成状态过滤）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "include_completed": {"type": "boolean", "description": "是否包含已完成任务（默认 true）"},
+                },
+                "required": ["project_dir"],
+            },
+        ),
+        Tool(
+            name="run_priority_upgrade_loop",
+            description="按模型优先级循环执行改造任务，支持断点续跑。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "task_ids": {"type": "array", "items": {"type": "string"}, "description": "仅执行指定任务 ID"},
+                    "max_tasks": {"type": "integer", "description": "本轮最多执行任务数（默认 6）"},
+                    "dry_run": {"type": "boolean", "description": "仅规划不执行（默认 false）"},
+                    "continue_on_error": {"type": "boolean", "description": "遇错是否继续（默认 true）"},
+                    "resume": {"type": "boolean", "description": "是否从断点续跑（默认 true）"},
+                    "day": {"type": "string", "description": "执行日期 YYYY-MM-DD（可选）"},
+                    "weekly_mode": {
+                        "type": "string",
+                        "enum": ["auto", "always", "never"],
+                        "description": "周报策略（默认 auto）",
+                    },
+                    "run_loop": {"type": "boolean", "description": "执行 run_and_sync_overleaf 任务时是否跑循环（默认 true）"},
+                    "run_daily": {"type": "boolean", "description": "执行 run_and_sync_overleaf 任务时是否生成日报（默认 true）"},
+                    "sync_mode": {
+                        "type": "string",
+                        "enum": ["none", "sync", "upload"],
+                        "description": "run_and_sync_overleaf 远端模式（默认 none）",
+                    },
+                    "ce_url": {"type": "string", "description": "Overleaf CE 地址（sync/upload 模式可选）"},
+                    "store_path": {"type": "string", "description": ".olauth 路径（sync/upload 模式可选）"},
+                    "project_name": {"type": "string", "description": "Overleaf 项目名（sync 模式可选）"},
                 },
                 "required": ["project_dir"],
             },
@@ -1508,6 +1569,9 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             overwrite_reviews=_as_bool(arguments.get("overwrite_reviews"), True),
             write_state=_as_bool(arguments.get("write_state"), True),
             auto_scan_inputs=_as_bool(arguments.get("auto_scan_inputs"), True),
+            use_cache=_as_bool(arguments.get("use_cache"), True),
+            cache_ttl_hours=_as_int(arguments.get("cache_ttl_hours"), 24),
+            force_refresh=_as_bool(arguments.get("force_refresh"), False),
             write_missing_checklist=_as_bool(arguments.get("write_missing_checklist"), True),
             strict_missing=_as_bool(arguments.get("strict_missing"), False),
             loop_write_daily_review=_as_bool(arguments.get("loop_write_daily_review"), False),
@@ -1536,6 +1600,48 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             target_preference=str(arguments.get("target_preference")) if arguments.get("target_preference") else None,
             max_candidates=arguments.get("max_candidates"),
             append_claim_evidence=arguments.get("append_claim_evidence"),
+        )
+        return _dump(data)
+
+    if name == "run_paper_doctor":
+        project_dir = arguments.get("project_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        data = run_paper_doctor(
+            project_dir=str(project_dir),
+            write_report=_as_bool(arguments.get("write_report"), True),
+        )
+        return _dump(data)
+
+    if name == "list_upgrade_tasks":
+        project_dir = arguments.get("project_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        data = list_upgrade_tasks(
+            project_dir=str(project_dir),
+            include_completed=_as_bool(arguments.get("include_completed"), True),
+        )
+        return _dump(data)
+
+    if name == "run_priority_upgrade_loop":
+        project_dir = arguments.get("project_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        data = run_priority_upgrade_loop(
+            project_dir=str(project_dir),
+            task_ids=arguments.get("task_ids"),
+            max_tasks=_as_int(arguments.get("max_tasks"), 6),
+            dry_run=_as_bool(arguments.get("dry_run"), False),
+            continue_on_error=_as_bool(arguments.get("continue_on_error"), True),
+            resume=_as_bool(arguments.get("resume"), True),
+            day=str(arguments.get("day")) if arguments.get("day") else None,
+            weekly_mode=str(arguments.get("weekly_mode") or "auto"),
+            run_loop=_as_bool(arguments.get("run_loop"), True),
+            run_daily=_as_bool(arguments.get("run_daily"), True),
+            ce_url=str(arguments.get("ce_url")) if arguments.get("ce_url") else None,
+            store_path=str(arguments.get("store_path")) if arguments.get("store_path") else None,
+            project_name=str(arguments.get("project_name")) if arguments.get("project_name") else None,
+            sync_mode=str(arguments.get("sync_mode") or "none"),
         )
         return _dump(data)
 

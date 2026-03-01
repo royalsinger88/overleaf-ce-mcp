@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -338,6 +339,44 @@ def _write_cycle_summary(project_root: Path, payload: Dict[str, Any]) -> Dict[st
     return {"summary_json": str(json_path), "summary_markdown": str(md_path)}
 
 
+def _loop_cache_key(effective: Dict[str, Any]) -> str:
+    raw = json.dumps(effective, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _loop_cache_path(project_root: Path, cache_key: str) -> Path:
+    d = project_root / "paper_state" / "cache" / "paper_cycle"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{cache_key}.json"
+
+
+def _load_loop_cache(path: Path, ttl_hours: int) -> Optional[Dict[str, Any]]:
+    if not path.exists() or not path.is_file():
+        return None
+    age_seconds = (_dt.datetime.now(_dt.timezone.utc).timestamp() - path.stat().st_mtime)
+    if age_seconds > max(1, int(ttl_hours)) * 3600:
+        return None
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    data = obj.get("loop_result")
+    if not isinstance(data, dict):
+        return None
+    return {"loop_result": data, "cached_at": obj.get("cached_at"), "cache_key": obj.get("cache_key")}
+
+
+def _save_loop_cache(path: Path, cache_key: str, loop_result: Dict[str, Any]) -> None:
+    payload = {
+        "cache_key": cache_key,
+        "cached_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "loop_result": loop_result,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def run_paper_cycle(
     project_dir: str,
     day: Optional[str] = None,
@@ -349,6 +388,9 @@ def run_paper_cycle(
     auto_scan_inputs: bool = True,
     write_missing_checklist: bool = True,
     strict_missing: bool = False,
+    use_cache: bool = True,
+    cache_ttl_hours: int = 24,
+    force_refresh: bool = False,
     loop_config_path: Optional[str] = None,
     topic: Optional[str] = None,
     known_data: Optional[str] = None,
@@ -382,6 +424,7 @@ def run_paper_cycle(
     weekly_enabled = _weekly_switch(weekly_mode, target_day)
     executed_steps: List[str] = []
     auto_info: Dict[str, Any] = {"enabled": auto_scan_inputs}
+    cache_info: Dict[str, Any] = {"enabled": bool(use_cache), "hit": False}
 
     eff_topic = topic
     eff_known_data = known_data
@@ -447,34 +490,75 @@ def run_paper_cycle(
 
     loop_result: Optional[Dict[str, Any]] = None
     if run_loop:
-        loop_result = run_optimization_loop(
-            project_dir=str(root),
-            loop_config_path=loop_config_path,
-            topic=eff_topic,
-            known_data=eff_known_data,
-            writing_direction=eff_writing_direction,
-            baseline_models=eff_baseline_models,
-            improvement_modules=eff_improvement_modules,
-            target_journal=eff_target_journal,
-            constraints=eff_constraints,
-            query=eff_query,
-            source=eff_source,
-            max_rounds=max_rounds,
-            min_score_improvement=min_score_improvement,
-            patience=patience,
-            target_score=target_score,
-            max_results_per_source=max_results_per_source,
-            max_items_for_note=max_items_for_note,
-            num_prompts=num_prompts,
-            timeout=timeout,
-            s2_api_key=s2_api_key,
-            enable_journal_recommendation=enable_journal_recommendation,
-            target_preference=target_preference,
-            max_candidates=max_candidates,
-            write_daily_review=loop_write_daily_review,
-            append_claim_evidence=append_claim_evidence,
-        )
-        executed_steps.append("optimization_loop")
+        effective_for_cache = {
+            "topic": eff_topic,
+            "known_data": eff_known_data,
+            "writing_direction": eff_writing_direction,
+            "baseline_models": eff_baseline_models,
+            "improvement_modules": eff_improvement_modules,
+            "target_journal": eff_target_journal,
+            "constraints": eff_constraints,
+            "query": eff_query,
+            "source": eff_source,
+            "max_rounds": max_rounds,
+            "min_score_improvement": min_score_improvement,
+            "patience": patience,
+            "target_score": target_score,
+            "max_results_per_source": max_results_per_source,
+            "max_items_for_note": max_items_for_note,
+            "num_prompts": num_prompts,
+            "timeout": timeout,
+            "enable_journal_recommendation": enable_journal_recommendation,
+            "target_preference": target_preference,
+            "max_candidates": max_candidates,
+            "append_claim_evidence": append_claim_evidence,
+            "loop_write_daily_review": loop_write_daily_review,
+        }
+        cache_key = _loop_cache_key(effective_for_cache)
+        cache_path = _loop_cache_path(root, cache_key)
+        cache_info["cache_key"] = cache_key
+        cache_info["cache_path"] = str(cache_path)
+
+        cached = None
+        if use_cache and not force_refresh:
+            cached = _load_loop_cache(cache_path, ttl_hours=max(1, int(cache_ttl_hours)))
+        if cached:
+            loop_result = cached["loop_result"]
+            cache_info["hit"] = True
+            cache_info["cached_at"] = cached.get("cached_at")
+            executed_steps.append("optimization_loop(cache)")
+        else:
+            cache_info["hit"] = False
+            loop_result = run_optimization_loop(
+                project_dir=str(root),
+                loop_config_path=loop_config_path,
+                topic=eff_topic,
+                known_data=eff_known_data,
+                writing_direction=eff_writing_direction,
+                baseline_models=eff_baseline_models,
+                improvement_modules=eff_improvement_modules,
+                target_journal=eff_target_journal,
+                constraints=eff_constraints,
+                query=eff_query,
+                source=eff_source,
+                max_rounds=max_rounds,
+                min_score_improvement=min_score_improvement,
+                patience=patience,
+                target_score=target_score,
+                max_results_per_source=max_results_per_source,
+                max_items_for_note=max_items_for_note,
+                num_prompts=num_prompts,
+                timeout=timeout,
+                s2_api_key=s2_api_key,
+                enable_journal_recommendation=enable_journal_recommendation,
+                target_preference=target_preference,
+                max_candidates=max_candidates,
+                write_daily_review=loop_write_daily_review,
+                append_claim_evidence=append_claim_evidence,
+            )
+            executed_steps.append("optimization_loop")
+            if use_cache and isinstance(loop_result, dict):
+                _save_loop_cache(cache_path, cache_key, loop_result)
 
     daily_result: Optional[Dict[str, Any]] = None
     if run_daily:
@@ -505,6 +589,7 @@ def run_paper_cycle(
         "weekly_enabled": weekly_enabled,
         "executed_steps": executed_steps,
         "auto_inputs": auto_info,
+        "cache": cache_info,
         "loop": loop_result,
         "daily_review": daily_result,
         "weekly_summary": weekly_result,

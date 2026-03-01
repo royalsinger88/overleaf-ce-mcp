@@ -108,6 +108,9 @@ docker run --rm -it \
 - `synthesize_paper_strategy`: 综合多轮研究结果，给出题目/创新点/写作侧重点
 - `run_optimization_loop`: 执行受控循环优化并自动沉淀轮次产物（支持停止条件）
 - `run_paper_cycle`: 一键执行优化循环 + 日报 +（按策略）周报
+- `run_paper_doctor`: 校验 `paper_state/inputs` 规范并给出修复建议
+- `list_upgrade_tasks`: 查看六项改造任务的优先级队列
+- `run_priority_upgrade_loop`: 按优先级循环执行改造任务（支持断点续跑）
 - `generate_daily_review`: 生成每日复盘（自动汇总当日轮次与证据）
 - `generate_weekly_summary`: 生成每周总结（自动聚合日报与证据）
 - `init_model_diagram_pack`: 生成模型结构图生产包（真值拓扑 + Nano Banana Pro 提示词）
@@ -280,6 +283,14 @@ export S2_API_KEY="your_semantic_scholar_key"
 - `overwrite_reviews`、`write_state`
 - `auto_scan_inputs`、`write_missing_checklist`
 - `strict_missing`（为 `true` 时，有缺失素材则直接停止）
+- `use_cache`、`cache_ttl_hours`、`force_refresh`（控制增量缓存）
+
+## 8.3 优先级改造循环（Skill 化）
+
+可直接调用 `run_priority_upgrade_loop`：
+- 自动按优先级执行：`paper_doctor -> 同步闭环 -> 证据绑定 -> 缓存 -> 断点 -> 调度模板`
+- `resume=true` 时从 `paper_state/memory/upgrade_loop_state.json` 断点续跑
+- `dry_run=true` 可先看计划不落地
 
 ## 9. 模型结构图协同（Nano Banana Pro）
 

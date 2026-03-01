@@ -20,6 +20,9 @@ def test_list_tools_contains_key_entries():
     assert "init_paper_state_workspace" in names
     assert "run_optimization_loop" in names
     assert "run_paper_cycle" in names
+    assert "run_paper_doctor" in names
+    assert "list_upgrade_tasks" in names
+    assert "run_priority_upgrade_loop" in names
     assert "generate_daily_review" in names
     assert "generate_weekly_summary" in names
     assert "list_academic_source_capabilities" in names
@@ -236,3 +239,54 @@ def test_execute_tool_run_paper_cycle(monkeypatch):
     assert captured["auto_scan_inputs"] is True
     assert captured["write_missing_checklist"] is True
     assert captured["strict_missing"] is False
+
+
+def test_execute_tool_run_paper_doctor(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "run_paper_doctor",
+        lambda **kwargs: {"ok": True, "score": 0.9, "summary": {"high": 0, "medium": 1, "low": 1}},
+    )
+    text = asyncio.run(
+        server._execute_tool(
+            "run_paper_doctor",
+            {"project_dir": "/tmp/paper-project"},
+        )
+    )
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert data["score"] == 0.9
+
+
+def test_execute_tool_list_upgrade_tasks(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "list_upgrade_tasks",
+        lambda **kwargs: {"ok": True, "count": 2, "tasks": [{"id": "paper_doctor"}, {"id": "run_and_sync_overleaf"}]},
+    )
+    text = asyncio.run(
+        server._execute_tool(
+            "list_upgrade_tasks",
+            {"project_dir": "/tmp/paper-project"},
+        )
+    )
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert data["count"] == 2
+
+
+def test_execute_tool_run_priority_upgrade_loop(monkeypatch):
+    monkeypatch.setattr(
+        server,
+        "run_priority_upgrade_loop",
+        lambda **kwargs: {"ok": True, "executed": [{"task_id": "paper_doctor", "ok": True}]},
+    )
+    text = asyncio.run(
+        server._execute_tool(
+            "run_priority_upgrade_loop",
+            {"project_dir": "/tmp/paper-project", "max_tasks": 2, "dry_run": True},
+        )
+    )
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert data["executed"][0]["task_id"] == "paper_doctor"

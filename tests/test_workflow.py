@@ -179,3 +179,46 @@ def test_run_paper_cycle_strict_missing(tmp_path):
         assert False, "应当抛出缺失素材异常"
     except ValueError as exc:
         assert "INPUT_MISSING.md" in str(exc)
+
+
+def test_run_paper_cycle_cache_hit(monkeypatch, tmp_path):
+    init_paper_state_workspace(project_dir=str(tmp_path), title="Demo")
+    (tmp_path / "paper_state" / "inputs" / "writing_brief.md").write_text(
+        "# 写作初步思路\n\n## 研究问题\n- A\n\n## 预期创新点\n- B\n\n## 当前证据\n- C\n",
+        encoding="utf-8",
+    )
+    called = {"loop": 0}
+
+    def _loop(**kwargs):
+        called["loop"] += 1
+        return {"ok": True, "round_count": 1}
+
+    monkeypatch.setattr("overleaf_ce_mcp.workflow.run_optimization_loop", _loop)
+    monkeypatch.setattr(
+        "overleaf_ce_mcp.workflow.generate_daily_review",
+        lambda **kwargs: {"ok": True, "date": kwargs["day"], "path": "/tmp/daily.md"},
+    )
+
+    # 第一次会执行 loop 并写缓存
+    res1 = run_paper_cycle(
+        project_dir=str(tmp_path),
+        day="2026-03-01",
+        weekly_mode="never",
+        run_daily=False,
+        use_cache=True,
+    )
+    assert res1["ok"] is True
+    assert called["loop"] == 1
+    assert res1["cache"]["hit"] is False
+
+    # 第二次相同输入应命中缓存，不再调用 loop
+    res2 = run_paper_cycle(
+        project_dir=str(tmp_path),
+        day="2026-03-01",
+        weekly_mode="never",
+        run_daily=False,
+        use_cache=True,
+    )
+    assert res2["ok"] is True
+    assert called["loop"] == 1
+    assert res2["cache"]["hit"] is True
