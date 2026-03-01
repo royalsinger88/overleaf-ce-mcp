@@ -111,6 +111,8 @@ docker run --rm -it \
 - `run_paper_doctor`: 校验 `paper_state/inputs` 规范并给出修复建议
 - `list_upgrade_tasks`: 查看六项改造任务的优先级队列
 - `run_priority_upgrade_loop`: 按优先级循环执行改造任务（支持断点续跑）
+- `list_generic_priority_tasks`: 读取任意任务计划（JSON）并给出优先级队列
+- `run_generic_priority_loop`: 执行通用优先级循环（可 dry-run / resume / shell）
 - `generate_daily_review`: 生成每日复盘（自动汇总当日轮次与证据）
 - `generate_weekly_summary`: 生成每周总结（自动聚合日报与证据）
 - `init_model_diagram_pack`: 生成模型结构图生产包（真值拓扑 + Nano Banana Pro 提示词）
@@ -291,6 +293,21 @@ export S2_API_KEY="your_semantic_scholar_key"
 - 自动按优先级执行：`paper_doctor -> 同步闭环 -> 证据绑定 -> 缓存 -> 断点 -> 调度模板`
 - `resume=true` 时从 `paper_state/memory/upgrade_loop_state.json` 断点续跑
 - `dry_run=true` 可先看计划不落地
+
+## 8.4 通用优先级循环（跨项目复用）
+
+你可以在任意工作目录放一个 `plan.json`，然后运行通用循环。
+
+示例 `plan.json`：
+
+```json
+{
+  "tasks": [
+    {"id":"t1","title":"诊断","impact":10,"effort":2,"dependencies":[],"action":{"type":"noop"}},
+    {"id":"t2","title":"执行脚本","impact":8,"effort":3,"dependencies":["t1"],"action":{"type":"shell","cmd":"bash scripts/run.sh"}}
+  ]
+}
+```
 
 ## 9. 模型结构图协同（Nano Banana Pro）
 

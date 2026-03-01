@@ -22,6 +22,7 @@ from .deep_research import (
     synthesize_paper_strategy,
 )
 from .diagram_workflow import init_model_diagram_pack
+from .generic_priority_loop import list_generic_priority_tasks, run_generic_priority_loop
 from .optimization_loop import run_optimization_loop
 from .paper_doctor import run_paper_doctor
 from .review import generate_daily_review, generate_weekly_summary
@@ -777,6 +778,37 @@ async def list_tools() -> List[Tool]:
                     "project_name": {"type": "string", "description": "Overleaf 项目名（sync 模式可选）"},
                 },
                 "required": ["project_dir"],
+            },
+        ),
+        Tool(
+            name="list_generic_priority_tasks",
+            description="列出通用优先级任务（基于外部 JSON 计划文件，可用于任意工作流）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workspace_dir": {"type": "string", "description": "工作目录（必填）"},
+                    "plan_path": {"type": "string", "description": "任务计划 JSON 路径（可相对 workspace）"},
+                    "include_completed": {"type": "boolean", "description": "是否包含已完成任务（默认 true）"},
+                },
+                "required": ["workspace_dir", "plan_path"],
+            },
+        ),
+        Tool(
+            name="run_generic_priority_loop",
+            description="执行通用优先级循环（支持 dry-run、断点续跑、shell 任务）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workspace_dir": {"type": "string", "description": "工作目录（必填）"},
+                    "plan_path": {"type": "string", "description": "任务计划 JSON 路径（可相对 workspace）"},
+                    "max_tasks": {"type": "integer", "description": "本轮最多执行任务数（默认 10）"},
+                    "dry_run": {"type": "boolean", "description": "仅规划不执行（默认 false）"},
+                    "continue_on_error": {"type": "boolean", "description": "遇错是否继续（默认 true）"},
+                    "resume": {"type": "boolean", "description": "是否从断点续跑（默认 true）"},
+                    "allow_shell": {"type": "boolean", "description": "是否允许执行 shell 任务（默认 false）"},
+                    "default_timeout_sec": {"type": "integer", "description": "shell 任务默认超时秒数（默认 1800）"},
+                },
+                "required": ["workspace_dir", "plan_path"],
             },
         ),
         Tool(
@@ -1642,6 +1674,39 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             store_path=str(arguments.get("store_path")) if arguments.get("store_path") else None,
             project_name=str(arguments.get("project_name")) if arguments.get("project_name") else None,
             sync_mode=str(arguments.get("sync_mode") or "none"),
+        )
+        return _dump(data)
+
+    if name == "list_generic_priority_tasks":
+        workspace_dir = arguments.get("workspace_dir")
+        plan_path = arguments.get("plan_path")
+        if not workspace_dir:
+            raise ValueError("workspace_dir 不能为空")
+        if not plan_path:
+            raise ValueError("plan_path 不能为空")
+        data = list_generic_priority_tasks(
+            workspace_dir=str(workspace_dir),
+            plan_path=str(plan_path),
+            include_completed=_as_bool(arguments.get("include_completed"), True),
+        )
+        return _dump(data)
+
+    if name == "run_generic_priority_loop":
+        workspace_dir = arguments.get("workspace_dir")
+        plan_path = arguments.get("plan_path")
+        if not workspace_dir:
+            raise ValueError("workspace_dir 不能为空")
+        if not plan_path:
+            raise ValueError("plan_path 不能为空")
+        data = run_generic_priority_loop(
+            workspace_dir=str(workspace_dir),
+            plan_path=str(plan_path),
+            max_tasks=_as_int(arguments.get("max_tasks"), 10),
+            dry_run=_as_bool(arguments.get("dry_run"), False),
+            continue_on_error=_as_bool(arguments.get("continue_on_error"), True),
+            resume=_as_bool(arguments.get("resume"), True),
+            allow_shell=_as_bool(arguments.get("allow_shell"), False),
+            default_timeout_sec=_as_int(arguments.get("default_timeout_sec"), 1800),
         )
         return _dump(data)
 
