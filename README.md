@@ -109,6 +109,8 @@ docker run --rm -it \
 - `run_optimization_loop`: 执行受控循环优化并自动沉淀轮次产物（支持停止条件）
 - `run_paper_cycle`: 一键执行优化循环 + 日报 +（按策略）周报
 - `run_paper_doctor`: 校验 `paper_state/inputs` 规范并给出修复建议
+- `run_manuscript_evidence_binding`: 生成“段落-证据覆盖率”报告，定位无来源段落
+- `generate_scheduler_templates`: 生成每日/每周自动执行模板（cron + systemd）
 - `list_upgrade_tasks`: 查看六项改造任务的优先级队列
 - `run_priority_upgrade_loop`: 按优先级循环执行改造任务（支持断点续跑）
 - `list_generic_priority_plan_templates`: 列出内置通用计划模板
@@ -288,6 +290,9 @@ export S2_API_KEY="your_semantic_scholar_key"
 - `auto_scan_inputs`、`write_missing_checklist`
 - `strict_missing`（为 `true` 时，有缺失素材则直接停止）
 - `use_cache`、`cache_ttl_hours`、`force_refresh`（控制增量缓存）
+- `run_compile`（本地编译 `main.tex`）
+- `sync_mode`（`none/sync/upload`）+ `ce_url/store_path/project_name`
+- `sync_delete_policy`（`d/r/i`）+ `compile_check`
 
 ## 8.3 优先级改造循环（Skill 化）
 

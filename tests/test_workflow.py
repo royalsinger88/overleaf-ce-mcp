@@ -222,3 +222,32 @@ def test_run_paper_cycle_cache_hit(monkeypatch, tmp_path):
     assert res2["ok"] is True
     assert called["loop"] == 1
     assert res2["cache"]["hit"] is True
+
+
+def test_run_paper_cycle_with_delivery(monkeypatch, tmp_path):
+    init_paper_state_workspace(project_dir=str(tmp_path), title="Demo")
+    monkeypatch.setattr("overleaf_ce_mcp.workflow.run_optimization_loop", lambda **kwargs: {"ok": True})
+    monkeypatch.setattr(
+        "overleaf_ce_mcp.workflow.generate_daily_review",
+        lambda **kwargs: {"ok": True, "date": kwargs["day"], "path": "/tmp/daily.md"},
+    )
+
+    def _delivery(**kwargs):
+        return {"ok": True, "mode": "sync", "local_compile": {"ok": True}, "remote": {"ok": True}}
+
+    monkeypatch.setattr("overleaf_ce_mcp.workflow._deliver_to_overleaf", _delivery)
+
+    res = run_paper_cycle(
+        project_dir=str(tmp_path),
+        day="2026-03-01",
+        weekly_mode="never",
+        run_daily=False,
+        run_compile=True,
+        sync_mode="sync",
+        ce_url="http://127.0.0.1:17880",
+        project_name="demo",
+    )
+    assert res["ok"] is True
+    assert isinstance(res["delivery"], dict)
+    assert res["delivery"]["mode"] == "sync"
+    assert "overleaf_delivery" in res["executed_steps"]

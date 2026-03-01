@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 
 from .optimization_loop import run_optimization_loop
 from .review import generate_daily_review, generate_weekly_summary
+from .sync import command_exists, ols_sync, run_command
+from .upload import health_check_project, package_project_for_upload, upload_zip_as_new_project
 
 
 def _parse_day(raw: Optional[str]) -> _dt.date:
@@ -335,6 +337,14 @@ def _write_cycle_summary(project_root: Path, payload: Dict[str, Any]) -> Dict[st
         f"- 每日复盘：{'ok' if payload.get('daily_review') else 'skipped'}",
         f"- 每周总结：{'ok' if payload.get('weekly_summary') else 'skipped'}",
     ]
+    delivery = payload.get("delivery")
+    if isinstance(delivery, dict):
+        lines.extend(
+            [
+                f"- 交付闭环：{'ok' if delivery.get('ok') else 'failed'}",
+                f"- 同步模式：{delivery.get('mode')}",
+            ]
+        )
     md_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return {"summary_json": str(json_path), "summary_markdown": str(md_path)}
 
@@ -377,6 +387,118 @@ def _save_loop_cache(path: Path, cache_key: str, loop_result: Dict[str, Any]) ->
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _resolve_store_path(store_path: Optional[str]) -> str:
+    if store_path:
+        return str(Path(str(store_path)).expanduser().resolve())
+    return str((Path.home() / ".olauth").resolve())
+
+
+def _deliver_to_overleaf(
+    project_root: Path,
+    run_compile: bool,
+    compile_timeout_sec: int,
+    sync_mode: str,
+    ce_url: Optional[str],
+    store_path: Optional[str],
+    project_name: Optional[str],
+    sync_delete_policy: str,
+    compile_check: bool,
+) -> Dict[str, Any]:
+    mode = str(sync_mode or "none").strip().lower()
+    if mode not in ("none", "sync", "upload"):
+        raise ValueError("sync_mode 仅支持 none/sync/upload")
+    if str(sync_delete_policy or "i").strip().lower() not in ("d", "r", "i"):
+        raise ValueError("sync_delete_policy 仅支持 d/r/i")
+
+    out: Dict[str, Any] = {"ok": True, "mode": mode}
+    local_compile = {
+        "executed": bool(run_compile),
+        "ok": True,
+        "skipped": not bool(run_compile),
+        "reason": None,
+    }
+    if run_compile:
+        main_tex = project_root / "main.tex"
+        if not main_tex.exists():
+            local_compile.update({"ok": False, "skipped": False, "reason": "main.tex 不存在"})
+        elif not command_exists("latexmk"):
+            local_compile.update({"ok": False, "skipped": False, "reason": "未检测到 latexmk"})
+        else:
+            code, out_s, err_s = run_command(
+                ["latexmk", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
+                cwd=str(project_root),
+                timeout=max(30, int(compile_timeout_sec)),
+            )
+            local_compile.update(
+                {
+                    "ok": code == 0 and (project_root / "main.pdf").exists(),
+                    "skipped": False,
+                    "exit_code": code,
+                    "stdout_tail": out_s[-1200:],
+                    "stderr_tail": err_s[-1200:],
+                }
+            )
+
+    remote: Dict[str, Any] = {"mode": mode, "ok": True, "actions": []}
+    if mode == "none":
+        remote["actions"].append("skip_remote")
+    elif mode == "sync":
+        if not (ce_url and project_name):
+            remote = {"mode": mode, "ok": False, "error": "sync 模式需提供 ce_url 和 project_name", "actions": []}
+        else:
+            resolved_store = _resolve_store_path(store_path)
+            code, out_s, err_s = ols_sync(
+                workspace_path=str(project_root),
+                project_name=str(project_name),
+                ce_url=str(ce_url),
+                mode="bidirectional",
+                store_path=resolved_store,
+                delete_policy=str(sync_delete_policy).strip().lower(),
+                verbose=False,
+            )
+            remote = {
+                "mode": mode,
+                "ok": code == 0,
+                "sync": {
+                    "exit_code": code,
+                    "stdout_tail": out_s[-1200:],
+                    "stderr_tail": err_s[-1200:],
+                },
+            }
+            if code == 0:
+                remote["health"] = health_check_project(
+                    ce_url=str(ce_url),
+                    store_path=resolved_store,
+                    project_name=str(project_name),
+                    compile_check=bool(compile_check),
+                )
+    elif mode == "upload":
+        if not ce_url:
+            remote = {"mode": mode, "ok": False, "error": "upload 模式需提供 ce_url", "actions": []}
+        else:
+            resolved_store = _resolve_store_path(store_path)
+            pack = package_project_for_upload(project_dir=str(project_root))
+            up = upload_zip_as_new_project(
+                ce_url=str(ce_url),
+                store_path=resolved_store,
+                zip_path=str(pack["zip_path"]),
+                timeout=300,
+            )
+            remote = {"mode": mode, "ok": bool(up.get("ok")), "package": pack, "upload": up}
+            if up.get("ok"):
+                remote["health"] = health_check_project(
+                    ce_url=str(ce_url),
+                    store_path=resolved_store,
+                    project_id=str(up.get("project_id")),
+                    compile_check=bool(compile_check),
+                )
+
+    out["local_compile"] = local_compile
+    out["remote"] = remote
+    out["ok"] = bool(local_compile.get("ok")) and bool(remote.get("ok"))
+    return out
+
+
 def run_paper_cycle(
     project_dir: str,
     day: Optional[str] = None,
@@ -415,6 +537,14 @@ def run_paper_cycle(
     max_candidates: Optional[int] = None,
     append_claim_evidence: Optional[bool] = None,
     loop_write_daily_review: bool = False,
+    run_compile: bool = False,
+    compile_timeout_sec: int = 1800,
+    sync_mode: str = "none",
+    ce_url: Optional[str] = None,
+    store_path: Optional[str] = None,
+    project_name: Optional[str] = None,
+    sync_delete_policy: str = "i",
+    compile_check: bool = True,
 ) -> Dict[str, Any]:
     root = Path(project_dir).expanduser().resolve()
     if not root.exists() or not root.is_dir():
@@ -555,6 +685,10 @@ def run_paper_cycle(
                 max_candidates=max_candidates,
                 write_daily_review=loop_write_daily_review,
                 append_claim_evidence=append_claim_evidence,
+                use_cache=use_cache,
+                cache_ttl_hours=cache_ttl_hours,
+                force_refresh=force_refresh,
+                resume=True,
             )
             executed_steps.append("optimization_loop")
             if use_cache and isinstance(loop_result, dict):
@@ -580,8 +714,23 @@ def run_paper_cycle(
         )
         executed_steps.append("weekly_summary")
 
+    delivery_result: Optional[Dict[str, Any]] = None
+    if run_compile or str(sync_mode or "none").strip().lower() != "none":
+        delivery_result = _deliver_to_overleaf(
+            project_root=root,
+            run_compile=bool(run_compile),
+            compile_timeout_sec=max(30, int(compile_timeout_sec)),
+            sync_mode=sync_mode,
+            ce_url=ce_url,
+            store_path=store_path,
+            project_name=project_name,
+            sync_delete_policy=sync_delete_policy,
+            compile_check=bool(compile_check),
+        )
+        executed_steps.append("overleaf_delivery")
+
     payload: Dict[str, Any] = {
-        "ok": True,
+        "ok": True if delivery_result is None else bool(delivery_result.get("ok")),
         "project_dir": str(root),
         "executed_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         "day": target_day.isoformat(),
@@ -593,6 +742,7 @@ def run_paper_cycle(
         "loop": loop_result,
         "daily_review": daily_result,
         "weekly_summary": weekly_result,
+        "delivery": delivery_result,
     }
     payload["paths"] = _write_cycle_summary(root, payload)
     return payload

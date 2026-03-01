@@ -21,6 +21,7 @@ from .deep_research import (
     ingest_deep_research_report,
     synthesize_paper_strategy,
 )
+from .evidence_binding import run_manuscript_evidence_binding
 from .diagram_workflow import init_model_diagram_pack
 from .generic_priority_loop import (
     init_generic_priority_plan,
@@ -31,6 +32,7 @@ from .generic_priority_loop import (
 from .optimization_loop import run_optimization_loop
 from .paper_doctor import run_paper_doctor
 from .review import generate_daily_review, generate_weekly_summary
+from .scheduler import generate_scheduler_templates
 from .sync import command_exists, ols_list, ols_login, ols_sync, run_command
 from .scholar import (
     build_related_work_pack,
@@ -648,6 +650,10 @@ async def list_tools() -> List[Tool]:
                         "type": "boolean",
                         "description": "是否写入 claim_evidence 候选证据（默认 true）",
                     },
+                    "use_cache": {"type": "boolean", "description": "是否启用内层缓存（默认 true）"},
+                    "cache_ttl_hours": {"type": "integer", "description": "内层缓存有效期小时（默认 24）"},
+                    "force_refresh": {"type": "boolean", "description": "是否忽略内层缓存强制重算（默认 false）"},
+                    "resume": {"type": "boolean", "description": "是否从优化循环断点续跑（默认 true）"},
                 },
                 "required": ["project_dir"],
             },
@@ -725,6 +731,25 @@ async def list_tools() -> List[Tool]:
                         "type": "boolean",
                         "description": "是否写入 claim_evidence 候选证据（默认 true）",
                     },
+                    "run_compile": {
+                        "type": "boolean",
+                        "description": "是否在循环后本地编译 main.tex（默认 false）",
+                    },
+                    "compile_timeout_sec": {"type": "integer", "description": "本地编译超时秒数（默认 1800）"},
+                    "sync_mode": {
+                        "type": "string",
+                        "enum": ["none", "sync", "upload"],
+                        "description": "循环后远端模式（默认 none）",
+                    },
+                    "ce_url": {"type": "string", "description": "Overleaf CE 地址（sync/upload 模式需要）"},
+                    "store_path": {"type": "string", "description": ".olauth 路径（可选，默认 ~/.olauth）"},
+                    "project_name": {"type": "string", "description": "Overleaf 项目名（sync 模式需要）"},
+                    "sync_delete_policy": {
+                        "type": "string",
+                        "enum": ["d", "r", "i"],
+                        "description": "同步删除策略（默认 i）",
+                    },
+                    "compile_check": {"type": "boolean", "description": "远端健康检查是否触发编译（默认 true）"},
                 },
                 "required": ["project_dir"],
             },
@@ -739,6 +764,34 @@ async def list_tools() -> List[Tool]:
                     "write_report": {"type": "boolean", "description": "是否写报告到 outputs（默认 true）"},
                 },
                 "required": ["project_dir"],
+            },
+        ),
+        Tool(
+            name="run_manuscript_evidence_binding",
+            description="将 claim_evidence 绑定到手稿段落，输出“段落-证据覆盖率”报告。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "include_sections": {"type": "boolean", "description": "是否纳入 sections/*.tex（默认 true）"},
+                    "max_uncovered": {"type": "integer", "description": "输出未覆盖段落上限（默认 30）"},
+                    "write_report": {"type": "boolean", "description": "是否写报告到 outputs（默认 true）"},
+                },
+                "required": ["project_dir"],
+            },
+        ),
+        Tool(
+            name="generate_scheduler_templates",
+            description="生成每日/每周自动执行模板（cron + systemd timer）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "repo_dir": {"type": "string", "description": "overleaf-ce-mcp 仓库目录（必填）"},
+                    "python_bin": {"type": "string", "description": "Python 可执行路径（默认 /usr/bin/python3）"},
+                    "daily_time": {"type": "string", "description": "触发时间 HH:MM（默认 23:10）"},
+                },
+                "required": ["project_dir", "repo_dir"],
             },
         ),
         Tool(
@@ -1623,6 +1676,10 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             max_candidates=arguments.get("max_candidates"),
             write_daily_review=arguments.get("write_daily_review"),
             append_claim_evidence=arguments.get("append_claim_evidence"),
+            use_cache=arguments.get("use_cache"),
+            cache_ttl_hours=arguments.get("cache_ttl_hours"),
+            force_refresh=arguments.get("force_refresh"),
+            resume=_as_bool(arguments.get("resume"), True),
         )
         return _dump(data)
 
@@ -1670,6 +1727,14 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             target_preference=str(arguments.get("target_preference")) if arguments.get("target_preference") else None,
             max_candidates=arguments.get("max_candidates"),
             append_claim_evidence=arguments.get("append_claim_evidence"),
+            run_compile=_as_bool(arguments.get("run_compile"), False),
+            compile_timeout_sec=_as_int(arguments.get("compile_timeout_sec"), 1800),
+            sync_mode=str(arguments.get("sync_mode") or "none"),
+            ce_url=str(arguments.get("ce_url")) if arguments.get("ce_url") else None,
+            store_path=str(arguments.get("store_path")) if arguments.get("store_path") else None,
+            project_name=str(arguments.get("project_name")) if arguments.get("project_name") else None,
+            sync_delete_policy=str(arguments.get("sync_delete_policy") or "i"),
+            compile_check=_as_bool(arguments.get("compile_check"), True),
         )
         return _dump(data)
 
@@ -1680,6 +1745,33 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
         data = run_paper_doctor(
             project_dir=str(project_dir),
             write_report=_as_bool(arguments.get("write_report"), True),
+        )
+        return _dump(data)
+
+    if name == "run_manuscript_evidence_binding":
+        project_dir = arguments.get("project_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        data = run_manuscript_evidence_binding(
+            project_dir=str(project_dir),
+            include_sections=_as_bool(arguments.get("include_sections"), True),
+            max_uncovered=_as_int(arguments.get("max_uncovered"), 30),
+            write_report=_as_bool(arguments.get("write_report"), True),
+        )
+        return _dump(data)
+
+    if name == "generate_scheduler_templates":
+        project_dir = arguments.get("project_dir")
+        repo_dir = arguments.get("repo_dir")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        if not repo_dir:
+            raise ValueError("repo_dir 不能为空")
+        data = generate_scheduler_templates(
+            project_dir=str(project_dir),
+            repo_dir=str(repo_dir),
+            python_bin=str(arguments.get("python_bin") or "/usr/bin/python3"),
+            daily_time=str(arguments.get("daily_time") or "23:10"),
         )
         return _dump(data)
 

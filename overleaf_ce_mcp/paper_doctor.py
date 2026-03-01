@@ -49,6 +49,49 @@ def _issue(
     }
 
 
+def _parse_loop_value(text: str) -> Any:
+    s = text.strip()
+    if not s:
+        return ""
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        return s[1:-1]
+    low = s.lower()
+    if low in ("true", "yes", "on"):
+        return True
+    if low in ("false", "no", "off"):
+        return False
+    if low in ("null", "none", "~"):
+        return None
+    if re.fullmatch(r"-?\d+", s):
+        try:
+            return int(s)
+        except Exception:
+            return s
+    if re.fullmatch(r"-?\d+\.\d+", s):
+        try:
+            return float(s)
+        except Exception:
+            return s
+    return s
+
+
+def _read_flat_yaml(path: Path) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    text = _read_text(path) or ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            continue
+        k, v = line.split(":", 1)
+        key = k.strip()
+        if not key:
+            continue
+        out[key] = _parse_loop_value(v)
+    return out
+
+
 def _write_report(project_root: Path, report: Dict[str, Any]) -> Dict[str, str]:
     out_dir = project_root / "paper_state" / "outputs" / "paper_doctor"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -219,9 +262,100 @@ def run_paper_doctor(project_dir: str, write_report: bool = True) -> Dict[str, A
                 )
             )
 
-    # 5) claim_evidence.jsonl
+    # 5) seed_queries.yaml
+    seed_queries = literature / "seed_queries.yaml"
+    if not seed_queries.exists():
+        issues.append(
+            _issue(
+                "missing_seed_queries",
+                "medium",
+                str(seed_queries),
+                "缺少 seed_queries.yaml",
+                "补充至少一个 queries 项（text/source）。",
+            )
+        )
+    else:
+        sq_text = _read_text(seed_queries) or ""
+        item_hits = len(re.findall(r"^\s*-\s*name\s*:\s*", sq_text, flags=re.MULTILINE))
+        text_hits = len(re.findall(r"^\s*text\s*:\s*.+$", sq_text, flags=re.MULTILINE))
+        source_hits = len(re.findall(r"^\s*source\s*:\s*.+$", sq_text, flags=re.MULTILINE))
+        if item_hits <= 0 or text_hits <= 0:
+            issues.append(
+                _issue(
+                    "seed_queries_empty",
+                    "high",
+                    str(seed_queries),
+                    "seed_queries.yaml 未检测到有效查询项",
+                    "至少配置 1 条 queries 项，并包含 text/source 字段。",
+                )
+            )
+        elif source_hits <= 0:
+            issues.append(
+                _issue(
+                    "seed_queries_missing_source",
+                    "medium",
+                    str(seed_queries),
+                    "seed_queries.yaml 缺少 source 字段",
+                    "为每条 query 增加 source（all/arxiv/openalex/crossref/openreview 等）。",
+                )
+            )
+
+    # 6) experiments/registry.csv
+    reg = inputs / "experiments" / "registry.csv"
+    reg_cols = ["exp_id", "purpose", "split", "metric_primary", "status", "owner", "last_update", "summary"]
+    if not reg.exists():
+        issues.append(
+            _issue(
+                "missing_experiment_registry",
+                "high",
+                str(reg),
+                "缺少 experiments/registry.csv",
+                "创建实验注册表并写入标准表头。",
+            )
+        )
+    else:
+        try:
+            with reg.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.reader(f)
+                header = next(reader, [])
+                rows = list(reader)
+            miss = [x for x in reg_cols if x not in header]
+            if miss:
+                issues.append(
+                    _issue(
+                        "experiment_registry_bad_header",
+                        "high",
+                        str(reg),
+                        f"实验注册表表头缺失字段: {', '.join(miss)}",
+                        f"修正表头为至少包含: {', '.join(reg_cols)}",
+                    )
+                )
+            if len([x for x in rows if any(str(c).strip() for c in x)]) <= 0:
+                issues.append(
+                    _issue(
+                        "experiment_registry_empty",
+                        "low",
+                        str(reg),
+                        "实验注册表暂无记录",
+                        "建议至少补充 1 条实验记录，提升自动分析与写作可靠性。",
+                    )
+                )
+        except Exception:
+            issues.append(
+                _issue(
+                    "experiment_registry_parse_error",
+                    "high",
+                    str(reg),
+                    "experiments/registry.csv 无法解析",
+                    "确保 UTF-8 编码且 CSV 格式正确。",
+                )
+            )
+
+    # 7) claim_evidence.jsonl
     claim_file = memory / "claim_evidence.jsonl"
     required_claim_keys = ["claim_id", "claim", "source_type", "source", "confidence", "status"]
+    allowed_confidence = {"high", "medium", "low"}
+    allowed_status = {"verified", "partial", "pending", "rejected", "candidate"}
     if not claim_file.exists():
         issues.append(
             _issue(
@@ -234,6 +368,7 @@ def run_paper_doctor(project_dir: str, write_report: bool = True) -> Dict[str, A
         )
     else:
         bad_count = 0
+        enum_bad_count = 0
         checked = 0
         for raw in (claim_file.read_text(encoding="utf-8") or "").splitlines():
             line = raw.strip()
@@ -250,6 +385,11 @@ def run_paper_doctor(project_dir: str, write_report: bool = True) -> Dict[str, A
                 continue
             if any(k not in obj for k in required_claim_keys):
                 bad_count += 1
+                continue
+            conf = str(obj.get("confidence") or "").strip().lower()
+            st = str(obj.get("status") or "").strip().lower()
+            if conf not in allowed_confidence or st not in allowed_status:
+                enum_bad_count += 1
         if checked > 0 and bad_count > 0:
             issues.append(
                 _issue(
@@ -260,8 +400,18 @@ def run_paper_doctor(project_dir: str, write_report: bool = True) -> Dict[str, A
                     "补齐必需字段并确保每行是合法 JSON。",
                 )
             )
+        if checked > 0 and enum_bad_count > 0:
+            issues.append(
+                _issue(
+                    "claim_evidence_invalid_enum",
+                    "medium",
+                    str(claim_file),
+                    f"claim_evidence.jsonl 有 {enum_bad_count}/{checked} 行 confidence/status 不在约定值内",
+                    "confidence 使用 high/medium/low；status 使用 verified/partial/pending/rejected/candidate。",
+                )
+            )
 
-    # 6) constraints / loop
+    # 8) constraints / loop
     constraints = inputs / "constraints.yaml"
     if not constraints.exists():
         issues.append(
@@ -284,6 +434,54 @@ def run_paper_doctor(project_dir: str, write_report: bool = True) -> Dict[str, A
                 "建议配置循环参数，便于稳定迭代。",
             )
         )
+    else:
+        cfg = _read_flat_yaml(loop)
+        must_keys = ["query", "source", "max_rounds", "patience", "target_score"]
+        miss = [k for k in must_keys if k not in cfg]
+        if miss:
+            issues.append(
+                _issue(
+                    "loop_yaml_missing_keys",
+                    "medium",
+                    str(loop),
+                    f"loop.yaml 缺少关键字段: {', '.join(miss)}",
+                    "补齐 query/source/max_rounds/patience/target_score 等字段。",
+                )
+            )
+        max_rounds_v = cfg.get("max_rounds")
+        if max_rounds_v is not None and not isinstance(max_rounds_v, int):
+            issues.append(
+                _issue(
+                    "loop_yaml_bad_max_rounds",
+                    "medium",
+                    str(loop),
+                    "loop.max_rounds 不是整数",
+                    "将 max_rounds 设置为整数，如 4。",
+                )
+            )
+        target_score_v = cfg.get("target_score")
+        if target_score_v is not None and not isinstance(target_score_v, (int, float)):
+            issues.append(
+                _issue(
+                    "loop_yaml_bad_target_score",
+                    "low",
+                    str(loop),
+                    "loop.target_score 不是数值",
+                    "将 target_score 设置为 0~1 之间的小数，如 0.85。",
+                )
+            )
+        source_v = str(cfg.get("source") or "").strip().lower()
+        allowed_source = {"all", "arxiv", "openalex", "crossref", "semantic_scholar", "openreview"}
+        if source_v and source_v not in allowed_source:
+            issues.append(
+                _issue(
+                    "loop_yaml_bad_source",
+                    "medium",
+                    str(loop),
+                    f"loop.source 不在允许值中: {source_v}",
+                    "source 使用 all/arxiv/openalex/crossref/semantic_scholar/openreview。",
+                )
+            )
 
     high = sum(1 for x in issues if x["severity"] == "high")
     medium = sum(1 for x in issues if x["severity"] == "medium")
@@ -301,4 +499,3 @@ def run_paper_doctor(project_dir: str, write_report: bool = True) -> Dict[str, A
     if write_report:
         report["paths"] = _write_report(root, report)
     return report
-

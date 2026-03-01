@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from .cache_store import build_cache_key, cache_path, load_cache, save_cache
 from .deep_research import generate_deep_research_prompt_set, synthesize_paper_strategy
 from .scholar import build_related_work_pack, recommend_target_journals
 
@@ -187,6 +189,35 @@ def _append_daily_review(review_path: Path, lines: List[str]) -> None:
         review_path.write_text(block, encoding="utf-8")
 
 
+def _loop_state_path(project_root: Path) -> Path:
+    p = project_root / "paper_state" / "memory" / "optimization_loop_state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _calc_loop_fingerprint(params: Dict[str, Any]) -> str:
+    raw = json.dumps(params, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _load_loop_state(path: Path) -> Optional[Dict[str, Any]]:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    return obj
+
+
+def _save_loop_state(path: Path, payload: Dict[str, Any]) -> None:
+    data = dict(payload)
+    data["updated_at"] = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def run_optimization_loop(
     project_dir: str,
     loop_config_path: Optional[str] = None,
@@ -213,6 +244,10 @@ def run_optimization_loop(
     max_candidates: Optional[int] = None,
     write_daily_review: Optional[bool] = None,
     append_claim_evidence: Optional[bool] = None,
+    use_cache: Optional[bool] = None,
+    cache_ttl_hours: Optional[int] = None,
+    force_refresh: Optional[bool] = None,
+    resume: bool = True,
 ) -> Dict[str, Any]:
     root = Path(project_dir).expanduser().resolve()
     if not root.exists() or not root.is_dir():
@@ -320,6 +355,13 @@ def run_optimization_loop(
     )
     append_claim = _as_bool(append_claim_raw, True)
 
+    use_cache_raw = use_cache if use_cache is not None else config.get("use_cache", True)
+    use_cache_v = _as_bool(use_cache_raw, True)
+    cache_ttl_raw = cache_ttl_hours if cache_ttl_hours is not None else config.get("cache_ttl_hours", 24)
+    cache_ttl_i = max(1, min(_as_int(cache_ttl_raw, 24), 168))
+    force_refresh_raw = force_refresh if force_refresh is not None else config.get("force_refresh", False)
+    force_refresh_v = _as_bool(force_refresh_raw, False)
+
     outputs_root = root / "paper_state" / "outputs" / "optimization_loop"
     outputs_root.mkdir(parents=True, exist_ok=True)
     review_daily_path = root / "paper_state" / "review" / "daily" / f"{_dt.date.today().isoformat()}.md"
@@ -328,15 +370,66 @@ def run_optimization_loop(
     if not claim_file.exists():
         claim_file.write_text("", encoding="utf-8")
 
+    params_fingerprint_payload = {
+        "topic": topic_s,
+        "known_data": known_data_s,
+        "writing_direction": writing_s,
+        "baseline_models": baselines,
+        "improvement_modules": improves,
+        "target_journal": target_journal_s,
+        "constraints": constraints_s,
+        "query": query_s,
+        "source": source_s,
+        "max_rounds": max_rounds_i,
+        "min_score_improvement": min_score_impr_f,
+        "patience": patience_i,
+        "target_score": target_score_f,
+        "max_results_per_source": max_results_i,
+        "max_items_for_note": max_items_i,
+        "num_prompts": num_prompts_i,
+        "timeout": timeout_i,
+        "enable_journal_recommendation": enable_journal,
+        "target_preference": target_pref_s,
+        "max_candidates": max_candidates_i,
+    }
+    loop_fp = _calc_loop_fingerprint(params_fingerprint_payload)
+    state_path = _loop_state_path(root)
+
     rounds: List[Dict[str, Any]] = []
     seen_evidence: Set[str] = set()
     report_summaries: List[str] = []
     prev_score = 0.0
     no_gain_rounds = 0
     no_new_evidence_rounds = 0
-    stop_reason = "max_rounds_reached"
+    resumed_from_round = 0
+    loaded_state = _load_loop_state(state_path) if resume else None
+    if loaded_state and str(loaded_state.get("fingerprint") or "") == loop_fp:
+        saved_rounds = loaded_state.get("rounds")
+        if isinstance(saved_rounds, list):
+            rounds = [x for x in saved_rounds if isinstance(x, dict)]
+        seen_saved = loaded_state.get("seen_evidence")
+        if isinstance(seen_saved, list):
+            seen_evidence = {str(x) for x in seen_saved if str(x).strip()}
+        summaries_saved = loaded_state.get("report_summaries")
+        if isinstance(summaries_saved, list):
+            report_summaries = [str(x) for x in summaries_saved if str(x).strip()]
+        prev_score = _as_float(loaded_state.get("prev_score"), 0.0)
+        no_gain_rounds = _as_int(loaded_state.get("no_gain_rounds"), 0)
+        no_new_evidence_rounds = _as_int(loaded_state.get("no_new_evidence_rounds"), 0)
+        resumed_from_round = len(rounds)
 
-    for idx in range(1, max_rounds_i + 1):
+    stop_reason = "max_rounds_reached"
+    cache_stats = {
+        "enabled": use_cache_v,
+        "ttl_hours": cache_ttl_i,
+        "force_refresh": force_refresh_v,
+        "related_work_hits": 0,
+        "journal_hits": 0,
+        "related_work_writes": 0,
+        "journal_writes": 0,
+    }
+
+    for idx in range(max(1, resumed_from_round + 1), max_rounds_i + 1):
         stage = "r1" if idx == 1 else "r2"
         prior = "\n".join(report_summaries[-3:]) if report_summaries else None
 
@@ -354,14 +447,40 @@ def run_optimization_loop(
             num_prompts=num_prompts_i,
         )
 
-        related = build_related_work_pack(
-            query=query_s,
-            source=source_s,
-            max_results_per_source=max_results_i,
-            max_items_for_note=max_items_i,
-            timeout=timeout_i,
-            s2_api_key=s2_api_key,
+        related_cache_key = build_cache_key(
+            {
+                "op": "build_related_work_pack",
+                "query": query_s,
+                "source": source_s,
+                "max_results_per_source": max_results_i,
+                "max_items_for_note": max_items_i,
+                "timeout": timeout_i,
+            }
         )
+        related_cache_fp = cache_path(root, "optimization_loop/related_work", related_cache_key)
+        related_cached = None
+        if use_cache_v and not force_refresh_v:
+            related_cached = load_cache(related_cache_fp, ttl_hours=cache_ttl_i)
+        if related_cached:
+            related = related_cached["data"]
+            cache_stats["related_work_hits"] += 1
+        else:
+            related = build_related_work_pack(
+                query=query_s,
+                source=source_s,
+                max_results_per_source=max_results_i,
+                max_items_for_note=max_items_i,
+                timeout=timeout_i,
+                s2_api_key=s2_api_key,
+            )
+            if use_cache_v and isinstance(related, dict):
+                save_cache(
+                    related_cache_fp,
+                    related_cache_key,
+                    related,
+                    meta={"query": query_s, "source": source_s},
+                )
+                cache_stats["related_work_writes"] += 1
 
         strategy = synthesize_paper_strategy(
             topic=topic_s,
@@ -376,14 +495,40 @@ def run_optimization_loop(
 
         journal_rec: Optional[Dict[str, Any]] = None
         if enable_journal:
-            journal_rec = recommend_target_journals(
-                topic=topic_s,
-                target_preference=target_pref_s,
-                max_candidates=max_candidates_i,
-                max_results_per_source=max_results_i,
-                timeout=timeout_i,
-                s2_api_key=s2_api_key,
+            journal_cache_key = build_cache_key(
+                {
+                    "op": "recommend_target_journals",
+                    "topic": topic_s,
+                    "target_preference": target_pref_s,
+                    "max_candidates": max_candidates_i,
+                    "max_results_per_source": max_results_i,
+                    "timeout": timeout_i,
+                }
             )
+            journal_cache_fp = cache_path(root, "optimization_loop/journal_rec", journal_cache_key)
+            journal_cached = None
+            if use_cache_v and not force_refresh_v:
+                journal_cached = load_cache(journal_cache_fp, ttl_hours=cache_ttl_i)
+            if journal_cached:
+                journal_rec = journal_cached["data"]
+                cache_stats["journal_hits"] += 1
+            else:
+                journal_rec = recommend_target_journals(
+                    topic=topic_s,
+                    target_preference=target_pref_s,
+                    max_candidates=max_candidates_i,
+                    max_results_per_source=max_results_i,
+                    timeout=timeout_i,
+                    s2_api_key=s2_api_key,
+                )
+                if use_cache_v and isinstance(journal_rec, dict):
+                    save_cache(
+                        journal_cache_fp,
+                        journal_cache_key,
+                        journal_rec,
+                        meta={"topic": topic_s, "target_preference": target_pref_s},
+                    )
+                    cache_stats["journal_writes"] += 1
 
         papers = related.get("papers") if isinstance(related.get("papers"), list) else []
         paper_count = len(papers)
@@ -489,6 +634,20 @@ def run_optimization_loop(
             f"Round {idx}: score={score}, new_evidence={new_evidence_count}, titles={len(titles)}"
         )
         rounds.append(round_data)
+        _save_loop_state(
+            state_path,
+            {
+                "fingerprint": loop_fp,
+                "params": params_fingerprint_payload,
+                "rounds": rounds,
+                "seen_evidence": sorted(seen_evidence),
+                "report_summaries": report_summaries,
+                "prev_score": score,
+                "no_gain_rounds": no_gain_rounds,
+                "no_new_evidence_rounds": no_new_evidence_rounds,
+                "stop_reason": "running",
+            },
+        )
 
         if write_daily:
             _append_daily_review(
@@ -520,6 +679,8 @@ def run_optimization_loop(
         "loop_config_path": str(cfg_path) if cfg_path else None,
         "stop_reason": stop_reason,
         "round_count": len(rounds),
+        "resume": {"enabled": bool(resume), "resumed_from_round": resumed_from_round, "state_path": str(state_path)},
+        "cache": cache_stats,
         "params": {
             "topic": topic_s,
             "query": query_s,
@@ -534,6 +695,9 @@ def run_optimization_loop(
             "enable_journal_recommendation": enable_journal,
             "target_preference": target_pref_s,
             "max_candidates": max_candidates_i,
+            "use_cache": use_cache_v,
+            "cache_ttl_hours": cache_ttl_i,
+            "force_refresh": force_refresh_v,
         },
         "rounds": rounds,
         "paths": {
@@ -542,6 +706,7 @@ def run_optimization_loop(
             "summary_markdown": str(outputs_root / "loop_summary.md"),
             "daily_review": str(review_daily_path) if write_daily else None,
             "claim_evidence": str(claim_file) if append_claim else None,
+            "state_path": str(state_path),
         },
     }
 
@@ -565,5 +730,20 @@ def run_optimization_loop(
     summary_md_path = outputs_root / "loop_summary.md"
     summary_json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     summary_md_path.write_text("\n".join(summary_md).rstrip() + "\n", encoding="utf-8")
+    _save_loop_state(
+        state_path,
+        {
+            "fingerprint": loop_fp,
+            "params": params_fingerprint_payload,
+            "rounds": rounds,
+            "seen_evidence": sorted(seen_evidence),
+            "report_summaries": report_summaries,
+            "prev_score": prev_score,
+            "no_gain_rounds": no_gain_rounds,
+            "no_new_evidence_rounds": no_new_evidence_rounds,
+            "stop_reason": stop_reason,
+            "finished_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        },
+    )
 
     return summary
