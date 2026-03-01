@@ -263,14 +263,14 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="search_academic_papers",
-            description="检索学术论文（官方 API：arXiv / Semantic Scholar）。",
+            description="检索学术论文（默认无 Key：arXiv / OpenAlex / Crossref；可选 Semantic Scholar）。",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "检索词（必填）"},
                     "source": {
                         "type": "string",
-                        "enum": ["all", "arxiv", "semantic_scholar"],
+                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar"],
                         "description": "检索来源，默认 all",
                     },
                     "max_results_per_source": {
@@ -280,7 +280,7 @@ async def list_tools() -> List[Tool]:
                     "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
                     "s2_api_key": {
                         "type": "string",
-                        "description": "Semantic Scholar API Key（可选，不传则读取环境变量 S2_API_KEY）",
+                        "description": "Semantic Scholar API Key（可选，仅 source=semantic_scholar 或 all 且需要 S2 时）",
                     },
                 },
                 "required": ["query"],
@@ -288,14 +288,14 @@ async def list_tools() -> List[Tool]:
         ),
         Tool(
             name="build_related_work_pack",
-            description="为论文写作生成“相关工作素材包”（含候选论文、综述草稿、BibTeX 草稿）。",
+            description="为论文写作生成“相关工作素材包”（默认无 Key 来源；含候选论文、综述草稿、BibTeX 草稿）。",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "研究主题检索词（必填）"},
                     "source": {
                         "type": "string",
-                        "enum": ["all", "arxiv", "semantic_scholar"],
+                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar"],
                         "description": "检索来源，默认 all",
                     },
                     "max_results_per_source": {
@@ -309,7 +309,7 @@ async def list_tools() -> List[Tool]:
                     "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
                     "s2_api_key": {
                         "type": "string",
-                        "description": "Semantic Scholar API Key（可选，不传则读取环境变量 S2_API_KEY）",
+                        "description": "Semantic Scholar API Key（可选，仅 source=semantic_scholar 或 all 且需要 S2 时）",
                     },
                 },
                 "required": ["query"],

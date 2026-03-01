@@ -30,7 +30,6 @@ docker build --build-arg INSTALL_LATEX=1 -t overleaf-ce-mcp:latex .
 docker run --rm -it \
   -v /root/overleaf-workspace:/workspace \
   -v /root/.olauth:/root/.olauth \
-  -e S2_API_KEY="your_semantic_scholar_key" \
   -w /workspace \
   overleaf-ce-mcp:latest
 ```
@@ -38,6 +37,7 @@ docker run --rm -it \
 说明：
 - 容器入口命令是 `overleaf-ce-mcp`（MCP stdio 服务）。
 - 默认模板目录已在镜像内设置为：`/opt/overleaf-ce-mcp/overleaf_ce_mcp/templates`。
+- 若要额外启用 Semantic Scholar，可追加：`-e S2_API_KEY="your_semantic_scholar_key"`。
 
 ## 4. 使用 compose 运行
 
@@ -107,7 +107,8 @@ docker run --rm -it \
 - 用 `INSTALL_LATEX=1` 重新构建。
 
 3. Semantic Scholar 检索经常 429
-- 给容器注入 `S2_API_KEY` 环境变量。
+- 默认 `source=all` 已不依赖 Semantic Scholar，可直接使用。
+- 若你必须用 Semantic Scholar，再给容器注入 `S2_API_KEY`。
 
 4. 同步时误传了 workspace 根目录
 - 当前版本已内置路径收敛护栏：`project_name` 命中同名子目录时自动收敛。

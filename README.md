@@ -157,12 +157,13 @@ docker run --rm -it \
 - `build_related_work_pack`
 
 推荐配置：
-- 仅 arXiv：无需额外 Key
-- Semantic Scholar：建议配置 `S2_API_KEY`，避免匿名限流（429）
+- 默认 `source=all`：走 `arXiv + OpenAlex + Crossref`，无需任何 API Key
+- 需要 Semantic Scholar 时：可选配置 `S2_API_KEY`
 
 示例（环境变量）：
 
 ```bash
+# 仅在你需要 Semantic Scholar 时才设置
 export S2_API_KEY="your_semantic_scholar_key"
 ```
 

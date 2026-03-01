@@ -1,4 +1,4 @@
-"""学术检索与相关工作素材生成（arXiv + Semantic Scholar）。"""
+"""学术检索与相关工作素材生成（默认无 Key：arXiv + OpenAlex + Crossref）。"""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ import requests
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 S2_API_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
+OPENALEX_API_URL = "https://api.openalex.org/works"
+CROSSREF_API_URL = "https://api.crossref.org/works"
 
 
 @dataclass
@@ -62,6 +64,61 @@ def _safe_year(raw: Optional[str]) -> Optional[int]:
         return int(m.group(1))
     except Exception:
         return None
+
+
+def _extract_arxiv_id(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    value = str(text).strip()
+    if not value:
+        return None
+    m = re.search(r"arxiv\.org/(?:abs|pdf)/([^/?#]+)", value, re.IGNORECASE)
+    if m:
+        aid = m.group(1)
+        aid = re.sub(r"\.pdf$", "", aid, flags=re.IGNORECASE)
+        return re.sub(r"v\d+$", "", aid)
+    m = re.search(r"\b(\d{4}\.\d{4,5})(?:v\d+)?\b", value)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _openalex_abstract(inv: object) -> str:
+    if not isinstance(inv, dict):
+        return ""
+    pairs = []
+    for word, positions in inv.items():
+        if not isinstance(word, str) or not isinstance(positions, list):
+            continue
+        for pos in positions:
+            if isinstance(pos, int):
+                pairs.append((pos, word))
+    if not pairs:
+        return ""
+    pairs.sort(key=lambda x: x[0])
+    return _clean_space(" ".join([w for _, w in pairs]))
+
+
+def _crossref_year(item: Dict[str, object]) -> Optional[int]:
+    for key in ("issued", "published-print", "published-online", "created"):
+        raw = item.get(key)
+        if not isinstance(raw, dict):
+            continue
+        date_parts = raw.get("date-parts")
+        if isinstance(date_parts, list) and date_parts:
+            first = date_parts[0]
+            if isinstance(first, list) and first:
+                year = first[0]
+                if isinstance(year, int):
+                    return year
+                y2 = _safe_year(str(year))
+                if y2:
+                    return y2
+    return None
+
+
+def _strip_xml_tags(text: str) -> str:
+    return _clean_space(re.sub(r"<[^>]+>", " ", text))
 
 
 def _key_for_dedup(p: PaperRecord) -> str:
@@ -225,6 +282,160 @@ def search_semantic_scholar(
     return out
 
 
+def search_openalex(
+    query: str,
+    per_page: int = 10,
+    timeout: int = 30,
+) -> List[PaperRecord]:
+    if not query or not query.strip():
+        raise ValueError("query 不能为空")
+    per_page = max(1, min(int(per_page), 50))
+    params = {
+        "search": query.strip(),
+        "per-page": per_page,
+    }
+    resp = requests.get(OPENALEX_API_URL, params=params, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    records = data.get("results", []) if isinstance(data, dict) else []
+
+    out: List[PaperRecord] = []
+    for item in records:
+        if not isinstance(item, dict):
+            continue
+        ids = item.get("ids") or {}
+        if not isinstance(ids, dict):
+            ids = {}
+        open_access = item.get("open_access") or {}
+        if not isinstance(open_access, dict):
+            open_access = {}
+        best_oa = item.get("best_oa_location") or {}
+        if not isinstance(best_oa, dict):
+            best_oa = {}
+        primary_location = item.get("primary_location") or {}
+        if not isinstance(primary_location, dict):
+            primary_location = {}
+        source_info = primary_location.get("source") or {}
+        if not isinstance(source_info, dict):
+            source_info = {}
+
+        authors: List[str] = []
+        for au in item.get("authorships", []) or []:
+            if not isinstance(au, dict):
+                continue
+            author_info = au.get("author") or {}
+            if not isinstance(author_info, dict):
+                continue
+            name = _clean_space(str(author_info.get("display_name") or ""))
+            if name:
+                authors.append(name)
+
+        doi_url = _clean_space(str(item.get("doi") or ""))
+        doi = doi_url.replace("https://doi.org/", "").replace("http://doi.org/", "") or None
+        arxiv_id = _extract_arxiv_id(str(ids.get("arxiv") or ""))
+        url = (
+            _clean_space(str(primary_location.get("landing_page_url") or ""))
+            or _clean_space(str(item.get("id") or ""))
+            or None
+        )
+        pdf_url = (
+            _clean_space(str(best_oa.get("pdf_url") or ""))
+            or _clean_space(str(open_access.get("oa_url") or ""))
+            or None
+        )
+
+        out.append(
+            PaperRecord(
+                source="openalex",
+                paper_id=_clean_space(str(item.get("id") or "")),
+                title=_clean_space(str(item.get("display_name") or "")),
+                abstract=_openalex_abstract(item.get("abstract_inverted_index")),
+                authors=authors,
+                year=item.get("publication_year") if isinstance(item.get("publication_year"), int) else None,
+                venue=_clean_space(str(source_info.get("display_name") or "")) or None,
+                url=url,
+                pdf_url=pdf_url,
+                doi=doi,
+                arxiv_id=arxiv_id,
+                citation_count=item.get("cited_by_count") if isinstance(item.get("cited_by_count"), int) else None,
+            )
+        )
+    return out
+
+
+def search_crossref(
+    query: str,
+    rows: int = 10,
+    timeout: int = 30,
+) -> List[PaperRecord]:
+    if not query or not query.strip():
+        raise ValueError("query 不能为空")
+    rows = max(1, min(int(rows), 50))
+    params = {
+        "query.bibliographic": query.strip(),
+        "rows": rows,
+    }
+    resp = requests.get(CROSSREF_API_URL, params=params, timeout=timeout)
+    resp.raise_for_status()
+    data = resp.json()
+    msg = data.get("message", {}) if isinstance(data, dict) else {}
+    items = msg.get("items", []) if isinstance(msg, dict) else []
+
+    out: List[PaperRecord] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        title = ""
+        raw_titles = item.get("title")
+        if isinstance(raw_titles, list) and raw_titles:
+            title = _clean_space(str(raw_titles[0]))
+        elif isinstance(raw_titles, str):
+            title = _clean_space(raw_titles)
+
+        abstract_raw = _clean_space(str(item.get("abstract") or ""))
+        abstract = _strip_xml_tags(abstract_raw) if abstract_raw else ""
+
+        authors: List[str] = []
+        for au in item.get("author", []) or []:
+            if not isinstance(au, dict):
+                continue
+            given = _clean_space(str(au.get("given") or ""))
+            family = _clean_space(str(au.get("family") or ""))
+            name = _clean_space(f"{given} {family}")
+            if name:
+                authors.append(name)
+
+        venue = ""
+        raw_venues = item.get("container-title")
+        if isinstance(raw_venues, list) and raw_venues:
+            venue = _clean_space(str(raw_venues[0]))
+        elif isinstance(raw_venues, str):
+            venue = _clean_space(raw_venues)
+
+        doi = _clean_space(str(item.get("DOI") or "")) or None
+        url = _clean_space(str(item.get("URL") or "")) or None
+
+        out.append(
+            PaperRecord(
+                source="crossref",
+                paper_id=doi or url or title,
+                title=title,
+                abstract=abstract,
+                authors=authors,
+                year=_crossref_year(item),
+                venue=venue or None,
+                url=url,
+                pdf_url=None,
+                doi=doi,
+                arxiv_id=None,
+                citation_count=item.get("is-referenced-by-count")
+                if isinstance(item.get("is-referenced-by-count"), int)
+                else None,
+            )
+        )
+    return out
+
+
 def search_academic_papers(
     query: str,
     source: str = "all",
@@ -233,8 +444,8 @@ def search_academic_papers(
     s2_api_key: Optional[str] = None,
 ) -> Dict[str, object]:
     src = source.strip().lower()
-    if src not in ("all", "arxiv", "semantic_scholar"):
-        raise ValueError("source 仅支持 all/arxiv/semantic_scholar")
+    if src not in ("all", "arxiv", "semantic_scholar", "openalex", "crossref"):
+        raise ValueError("source 仅支持 all/arxiv/openalex/crossref/semantic_scholar")
 
     raw: List[PaperRecord] = []
     errors: Dict[str, str] = {}
@@ -251,18 +462,47 @@ def search_academic_papers(
         except Exception as exc:
             errors["arxiv"] = str(exc)
 
-    if src in ("all", "semantic_scholar"):
+    if src in ("all", "openalex"):
         try:
             raw.extend(
-                search_semantic_scholar(
+                search_openalex(
                     query=query,
-                    limit=max_results_per_source,
+                    per_page=max_results_per_source,
                     timeout=timeout,
-                    api_key=s2_api_key,
                 )
             )
         except Exception as exc:
-            errors["semantic_scholar"] = str(exc)
+            errors["openalex"] = str(exc)
+
+    if src in ("all", "crossref"):
+        try:
+            raw.extend(
+                search_crossref(
+                    query=query,
+                    rows=max_results_per_source,
+                    timeout=timeout,
+                )
+            )
+        except Exception as exc:
+            errors["crossref"] = str(exc)
+
+    s2_key = s2_api_key or os.environ.get("S2_API_KEY")
+    run_semantic = src == "semantic_scholar" or (src == "all" and bool(s2_key))
+    if src in ("all", "semantic_scholar"):
+        if run_semantic:
+            try:
+                raw.extend(
+                    search_semantic_scholar(
+                        query=query,
+                        limit=max_results_per_source,
+                        timeout=timeout,
+                        api_key=s2_key,
+                    )
+                )
+            except Exception as exc:
+                errors["semantic_scholar"] = str(exc)
+        elif src == "all":
+            errors["semantic_scholar"] = "skipped: S2_API_KEY not provided"
 
     dedup: Dict[str, PaperRecord] = {}
     for p in raw:
@@ -271,7 +511,7 @@ def search_academic_papers(
         if old is None:
             dedup[key] = p
             continue
-        # 优先保留有 citation_count 的条目（通常来自 Semantic Scholar）
+        # 优先保留有 citation_count 的条目。
         old_score = old.citation_count if isinstance(old.citation_count, int) else -1
         new_score = p.citation_count if isinstance(p.citation_count, int) else -1
         if new_score > old_score:
