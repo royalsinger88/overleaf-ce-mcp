@@ -39,6 +39,42 @@ source /root/overleaf-ce-mcp/.venv/bin/activate
 overleaf-ce-mcp
 ```
 
+## 2.2 测试与 CI
+
+本地测试：
+
+```bash
+cd /root/overleaf-ce-mcp
+python3 -m pip install -e . --no-deps
+python3 -m pip install "mcp>=1.0.0" "requests>=2.31.0" "beautifulsoup4>=4.11.1" "pytest>=8.0.0"
+pytest -q
+python3 -m compileall overleaf_ce_mcp
+```
+
+CI：
+- GitHub Actions 工作流：`.github/workflows/ci.yml`
+- 覆盖 Python `3.11` / `3.12`
+- 执行 `compileall + pytest`
+
+## 2.1 Docker 运行
+
+```bash
+cd /root/overleaf-ce-mcp
+docker build -t overleaf-ce-mcp:latest .
+docker run --rm -it \
+  -v /root/overleaf-workspace:/workspace \
+  -v /root/.olauth:/root/.olauth \
+  -w /workspace \
+  overleaf-ce-mcp:latest
+```
+
+可选：需要容器内 `latexmk` 时，构建加上 `--build-arg INSTALL_LATEX=1`。
+
+详细说明见：
+- `docs/Docker部署.md`
+- `docs/使用手册.md`
+- `docs/快速上手.md`
+
 ## 3. 可用工具
 
 - `check_environment`: 检查 `ols/latexmk/zip/unzip` 是否可用
@@ -53,6 +89,13 @@ overleaf-ce-mcp
 - `upload_project_dir`: 将本地目录按通用规则打包后上传到 CE（创建新项目或覆盖已有项目）
 - `health_check_project`: 检查项目可见性与可编译性
 - `apply_compat_patches`: 手动触发兼容补丁（通常无需手动执行）
+- `search_academic_papers`: 检索论文（arXiv + Semantic Scholar 官方 API）
+- `build_related_work_pack`: 生成相关工作素材包（论文清单 + 综述草稿 + BibTeX 草稿）
+- `generate_deep_research_prompt`: 生成 GPT 网页版深度研究提示词
+- `generate_deep_research_prompt_set`: 生成多组深度研究提示词（R1/R2 迭代）
+- `ingest_deep_research_report`: 将深度研究报告转为参考资料包（URL/DOI/arXiv/BibTeX）
+- `synthesize_paper_strategy`: 综合多轮研究结果，给出题目/创新点/写作侧重点
+- `init_model_diagram_pack`: 生成模型结构图生产包（真值拓扑 + Nano Banana Pro 提示词）
 
 ## 4. 模板
 
@@ -106,3 +149,39 @@ overleaf-ce-mcp
 - `overleaf_ce_mcp/vendor_patches/`
 
 默认会在环境检查和 `ols` 调用前自动确保补丁生效；必要时可手动调用 `apply_compat_patches`。
+
+## 7. 学术检索增强（写作辅助）
+
+新增检索工具：
+- `search_academic_papers`
+- `build_related_work_pack`
+
+推荐配置：
+- 仅 arXiv：无需额外 Key
+- Semantic Scholar：建议配置 `S2_API_KEY`，避免匿名限流（429）
+
+示例（环境变量）：
+
+```bash
+export S2_API_KEY="your_semantic_scholar_key"
+```
+
+## 8. 深度研究报告协同（GPT 网页版）
+
+推荐链路：
+1. 用 `generate_deep_research_prompt_set` 生成 R1 多组提示词。  
+2. 在 GPT 网页版深度研究中运行并拿到 R1 报告。  
+3. 用 `ingest_deep_research_report` 解析 R1 报告并产出参考包。  
+4. 如有不确定点，再用 `generate_deep_research_prompt_set(round_stage=r2)` 生成 R2 提示词并重复。  
+5. 用 `synthesize_paper_strategy` 得出题目候选、创新点与写作侧重点。  
+6. 将 BibTeX 草稿合并到 `references.bib`，并据此改写引言/相关工作。  
+
+## 9. 模型结构图协同（Nano Banana Pro）
+
+推荐链路：
+1. 先用 draw.io 相关 MCP 生成并确认 `.drawio` 真值文件。  
+2. 调用 `init_model_diagram_pack`，传 `drawio_file_path` 生成“真值锁 + 提示词包”。  
+3. 先确认 `01-topology-truth.drawio` 与 `01-topology-lock.json`。  
+4. 以真值图为参考，在 Nano Banana Pro 用 `02-*` 生成主图。  
+5. 用 `03-*` 多轮只改样式，不改结构。  
+6. 用 `04-*` 生成局部模块放大图，并用 `05-*` 做一致性核对。  

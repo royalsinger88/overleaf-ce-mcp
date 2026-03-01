@@ -1,0 +1,55 @@
+\documentclass[preprint,12pt]{elsarticle}
+
+% 基础数学与图表宏包
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{url}
+\usepackage{lineno}
+
+\journal{Ocean Engineering}
+
+\begin{document}
+
+\begin{frontmatter}
+
+\title{{{TITLE}}}
+
+\author[inst1]{ {{AUTHORS}} }
+\cortext[cor1]{Corresponding author}
+\ead{ {{CORRESPONDING_EMAIL}} }
+
+\address[inst1]{School/Department, University/Institute, City, Country}
+
+\begin{abstract}
+\input{sections/abstract}
+\end{abstract}
+
+\begin{keyword}
+{{KEYWORDS}}
+\end{keyword}
+
+\end{frontmatter}
+
+% \linenumbers
+
+\input{sections/introduction}
+\input{sections/methods}
+\input{sections/results}
+\input{sections/discussion}
+\input{sections/conclusion}
+
+\section*{CRediT authorship contribution statement}
+Please provide author contribution statements here.
+
+\section*{Declaration of competing interest}
+The authors declare that they have no known competing financial interests or personal relationships that could have appeared to influence the work reported in this paper.
+
+\section*{Data availability}
+The data that support the findings of this study are available from the corresponding author upon reasonable request.
+
+\bibliographystyle{elsarticle-num}
+\bibliography{references}
+
+\end{document}

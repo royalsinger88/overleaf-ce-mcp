@@ -15,7 +15,15 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from .compat import ensure_compat_patches
+from .deep_research import (
+    generate_deep_research_prompt,
+    generate_deep_research_prompt_set,
+    ingest_deep_research_report,
+    synthesize_paper_strategy,
+)
+from .diagram_workflow import init_model_diagram_pack
 from .sync import command_exists, ols_list, ols_login, ols_sync, run_command
+from .scholar import build_related_work_pack, search_academic_papers
 from .template import init_template_project, list_templates
 from .upload import (
     find_project_by_name,
@@ -252,6 +260,169 @@ async def list_tools() -> List[Tool]:
             name="apply_compat_patches",
             description="手动应用 overleaf-sync-ce/socketIO 兼容补丁（通常无需手动执行）。",
             inputSchema={"type": "object", "properties": {}},
+        ),
+        Tool(
+            name="search_academic_papers",
+            description="检索学术论文（官方 API：arXiv / Semantic Scholar）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "检索词（必填）"},
+                    "source": {
+                        "type": "string",
+                        "enum": ["all", "arxiv", "semantic_scholar"],
+                        "description": "检索来源，默认 all",
+                    },
+                    "max_results_per_source": {
+                        "type": "integer",
+                        "description": "每个来源最多返回条目数（默认 8，最大 50）",
+                    },
+                    "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
+                    "s2_api_key": {
+                        "type": "string",
+                        "description": "Semantic Scholar API Key（可选，不传则读取环境变量 S2_API_KEY）",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="build_related_work_pack",
+            description="为论文写作生成“相关工作素材包”（含候选论文、综述草稿、BibTeX 草稿）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "研究主题检索词（必填）"},
+                    "source": {
+                        "type": "string",
+                        "enum": ["all", "arxiv", "semantic_scholar"],
+                        "description": "检索来源，默认 all",
+                    },
+                    "max_results_per_source": {
+                        "type": "integer",
+                        "description": "每个来源最多返回条目数（默认 8，最大 50）",
+                    },
+                    "max_items_for_note": {
+                        "type": "integer",
+                        "description": "用于生成相关工作草稿的条目数（默认 8）",
+                    },
+                    "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
+                    "s2_api_key": {
+                        "type": "string",
+                        "description": "Semantic Scholar API Key（可选，不传则读取环境变量 S2_API_KEY）",
+                    },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="generate_deep_research_prompt",
+            description="根据已有数据和撰写方向，生成可直接用于 GPT 网页版深度研究的提示词。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "研究主题（必填）"},
+                    "known_data": {"type": "string", "description": "已有数据/实验事实摘要（必填）"},
+                    "writing_direction": {"type": "string", "description": "撰写方向与核心思路（必填）"},
+                    "core_ideas": {"type": "array", "items": {"type": "string"}, "description": "补充要点（可选）"},
+                    "target_journal": {"type": "string", "description": "目标期刊（可选）"},
+                    "preferred_sources": {"type": "array", "items": {"type": "string"}, "description": "优先来源（可选）"},
+                    "output_language": {"type": "string", "description": "输出语言（默认 中文）"},
+                    "max_references": {"type": "integer", "description": "期望文献条目上限（默认 30）"},
+                },
+                "required": ["topic", "known_data", "writing_direction"],
+            },
+        ),
+        Tool(
+            name="generate_deep_research_prompt_set",
+            description="基于 baseline/改进模块/实验结果等信息，生成多组深度研究提示词（支持 R1/R2 迭代）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "研究主题（必填）"},
+                    "known_data": {"type": "string", "description": "已有数据与事实（必填）"},
+                    "writing_direction": {"type": "string", "description": "写作方向（必填）"},
+                    "baseline_models": {"type": "array", "items": {"type": "string"}, "description": "baseline 模型列表"},
+                    "improvement_modules": {"type": "array", "items": {"type": "string"}, "description": "主要改进模块列表"},
+                    "code_assets": {"type": "array", "items": {"type": "string"}, "description": "可引用代码资产（文件/仓库）"},
+                    "experiment_results": {"type": "string", "description": "实验结果摘要"},
+                    "draft_ideas": {"type": "string", "description": "初步写作思路"},
+                    "target_journal": {"type": "string", "description": "目标期刊"},
+                    "constraints": {"type": "string", "description": "约束条件（字数/时间/预算等）"},
+                    "round_stage": {
+                        "type": "string",
+                        "enum": ["r1", "r2"],
+                        "description": "提示词轮次，r1 首轮，r2 二轮补强",
+                    },
+                    "prior_findings": {"type": "string", "description": "上一轮研究结论摘要（r2 推荐）"},
+                    "preferred_sources": {"type": "array", "items": {"type": "string"}, "description": "优先来源"},
+                    "output_language": {"type": "string", "description": "输出语言（默认中文）"},
+                    "max_references": {"type": "integer", "description": "文献条目上限（默认30）"},
+                    "num_prompts": {"type": "integer", "description": "生成提示词组数（默认3，2-6）"},
+                },
+                "required": ["topic", "known_data", "writing_direction"],
+            },
+        ),
+        Tool(
+            name="ingest_deep_research_report",
+            description="将 GPT 深度研究报告转为参考资料包（提取 URL/DOI/arXiv/BibTeX 草稿）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "report_text": {"type": "string", "description": "研究报告全文（可选）"},
+                    "report_file_path": {"type": "string", "description": "研究报告文件路径（可选）"},
+                    "focus_topic": {"type": "string", "description": "聚焦主题标签（可选）"},
+                    "max_items": {"type": "integer", "description": "最大提取条目数（默认 30）"},
+                    "save_reference_note_path": {
+                        "type": "string",
+                        "description": "将解析摘要写入文件（可选）",
+                    },
+                    "save_bib_path": {"type": "string", "description": "将 BibTeX 草稿写入文件（可选）"},
+                },
+            },
+        ),
+        Tool(
+            name="synthesize_paper_strategy",
+            description="综合多轮研究报告与实验信息，给出题目候选、创新点和写作侧重点。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "研究主题（必填）"},
+                    "target_journal": {"type": "string", "description": "目标期刊"},
+                    "baseline_models": {"type": "array", "items": {"type": "string"}, "description": "baseline 模型列表"},
+                    "improvement_modules": {"type": "array", "items": {"type": "string"}, "description": "改进模块列表"},
+                    "key_results": {"type": "string", "description": "关键实验结果摘要"},
+                    "report_summaries": {"type": "array", "items": {"type": "string"}, "description": "多轮研究报告摘要"},
+                    "constraints": {"type": "string", "description": "投稿/写作约束"},
+                    "candidate_title_count": {"type": "integer", "description": "候选标题数量（默认6，3-10）"},
+                },
+                "required": ["topic"],
+            },
+        ),
+        Tool(
+            name="init_model_diagram_pack",
+            description="初始化模型结构图生产包（真值拓扑 + Nano Banana Pro 提示词 + 局部放大模板）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project_dir": {"type": "string", "description": "论文项目目录（必填）"},
+                    "model_name": {"type": "string", "description": "模型名称（必填）"},
+                    "drawio_file_path": {"type": "string", "description": "draw.io 真值文件路径（可选，推荐）"},
+                    "truth_priority": {
+                        "type": "string",
+                        "enum": ["auto", "drawio", "mermaid"],
+                        "description": "真值来源优先级（默认 auto）",
+                    },
+                    "mermaid_code": {"type": "string", "description": "真值拓扑 Mermaid 代码（可选）"},
+                    "modules": {"type": "array", "items": {"type": "string"}, "description": "模块清单（可选）"},
+                    "output_subdir": {
+                        "type": "string",
+                        "description": "输出子目录（默认 figures/model-diagram）",
+                    },
+                    "force": {"type": "boolean", "description": "已存在文件是否覆盖（默认 false）"},
+                },
+                "required": ["project_dir", "model_name"],
+            },
         ),
     ]
 
@@ -636,6 +807,164 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
     if name == "apply_compat_patches":
         data = ensure_compat_patches()
         return _dump({"ok": bool(data.get("ok", False)), "data": data})
+
+    if name == "search_academic_papers":
+        query = arguments.get("query")
+        if not query:
+            raise ValueError("query 不能为空")
+        source = str(arguments.get("source", "all"))
+        max_results = _as_int(arguments.get("max_results_per_source"), 8)
+        timeout = _as_int(arguments.get("timeout"), 30)
+        s2_api_key = arguments.get("s2_api_key")
+        data = search_academic_papers(
+            query=str(query),
+            source=source,
+            max_results_per_source=max_results,
+            timeout=timeout,
+            s2_api_key=str(s2_api_key) if s2_api_key else None,
+        )
+        return _dump(data)
+
+    if name == "build_related_work_pack":
+        query = arguments.get("query")
+        if not query:
+            raise ValueError("query 不能为空")
+        source = str(arguments.get("source", "all"))
+        max_results = _as_int(arguments.get("max_results_per_source"), 8)
+        max_items = _as_int(arguments.get("max_items_for_note"), 8)
+        timeout = _as_int(arguments.get("timeout"), 30)
+        s2_api_key = arguments.get("s2_api_key")
+        data = build_related_work_pack(
+            query=str(query),
+            source=source,
+            max_results_per_source=max_results,
+            max_items_for_note=max_items,
+            timeout=timeout,
+            s2_api_key=str(s2_api_key) if s2_api_key else None,
+        )
+        return _dump(data)
+
+    if name == "generate_deep_research_prompt":
+        topic = arguments.get("topic")
+        known_data = arguments.get("known_data")
+        writing_direction = arguments.get("writing_direction")
+        if not topic:
+            raise ValueError("topic 不能为空")
+        if not known_data:
+            raise ValueError("known_data 不能为空")
+        if not writing_direction:
+            raise ValueError("writing_direction 不能为空")
+        max_refs = _as_int(arguments.get("max_references"), 30)
+        data = generate_deep_research_prompt(
+            topic=str(topic),
+            known_data=str(known_data),
+            writing_direction=str(writing_direction),
+            core_ideas=arguments.get("core_ideas"),
+            target_journal=str(arguments.get("target_journal")) if arguments.get("target_journal") else None,
+            preferred_sources=arguments.get("preferred_sources"),
+            output_language=str(arguments.get("output_language") or "中文"),
+            max_references=max_refs,
+        )
+        return _dump(data)
+
+    if name == "generate_deep_research_prompt_set":
+        topic = arguments.get("topic")
+        known_data = arguments.get("known_data")
+        writing_direction = arguments.get("writing_direction")
+        if not topic:
+            raise ValueError("topic 不能为空")
+        if not known_data:
+            raise ValueError("known_data 不能为空")
+        if not writing_direction:
+            raise ValueError("writing_direction 不能为空")
+        data = generate_deep_research_prompt_set(
+            topic=str(topic),
+            known_data=str(known_data),
+            writing_direction=str(writing_direction),
+            baseline_models=arguments.get("baseline_models"),
+            improvement_modules=arguments.get("improvement_modules"),
+            code_assets=arguments.get("code_assets"),
+            experiment_results=str(arguments.get("experiment_results")) if arguments.get("experiment_results") else None,
+            draft_ideas=str(arguments.get("draft_ideas")) if arguments.get("draft_ideas") else None,
+            target_journal=str(arguments.get("target_journal")) if arguments.get("target_journal") else None,
+            constraints=str(arguments.get("constraints")) if arguments.get("constraints") else None,
+            round_stage=str(arguments.get("round_stage") or "r1"),
+            prior_findings=str(arguments.get("prior_findings")) if arguments.get("prior_findings") else None,
+            preferred_sources=arguments.get("preferred_sources"),
+            output_language=str(arguments.get("output_language") or "中文"),
+            max_references=_as_int(arguments.get("max_references"), 30),
+            num_prompts=_as_int(arguments.get("num_prompts"), 3),
+        )
+        return _dump(data)
+
+    if name == "ingest_deep_research_report":
+        report_text = arguments.get("report_text")
+        report_file_path = arguments.get("report_file_path")
+        max_items = _as_int(arguments.get("max_items"), 30)
+        data = ingest_deep_research_report(
+            report_text=str(report_text) if report_text is not None else None,
+            report_file_path=str(report_file_path) if report_file_path else None,
+            focus_topic=str(arguments.get("focus_topic")) if arguments.get("focus_topic") else None,
+            max_items=max_items,
+        )
+
+        note_path = arguments.get("save_reference_note_path")
+        if note_path:
+            p = Path(str(note_path)).expanduser().resolve()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            content = data.get("quick_note", "") + "\n\n# Headings\n" + "\n".join(
+                [f"- {x}" for x in data.get("headings", [])]
+            )
+            p.write_text(content, encoding="utf-8")
+            data["reference_note_path"] = str(p)
+
+        bib_path = arguments.get("save_bib_path")
+        if bib_path:
+            p = Path(str(bib_path)).expanduser().resolve()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            bib_entries = data.get("bibtex_entries", [])
+            if isinstance(bib_entries, list):
+                p.write_text("\n\n".join([str(x) for x in bib_entries if str(x).strip()]) + "\n", encoding="utf-8")
+            else:
+                p.write_text("", encoding="utf-8")
+            data["bib_path"] = str(p)
+
+        return _dump(data)
+
+    if name == "synthesize_paper_strategy":
+        topic = arguments.get("topic")
+        if not topic:
+            raise ValueError("topic 不能为空")
+        data = synthesize_paper_strategy(
+            topic=str(topic),
+            target_journal=str(arguments.get("target_journal")) if arguments.get("target_journal") else None,
+            baseline_models=arguments.get("baseline_models"),
+            improvement_modules=arguments.get("improvement_modules"),
+            key_results=str(arguments.get("key_results")) if arguments.get("key_results") else None,
+            report_summaries=arguments.get("report_summaries"),
+            constraints=str(arguments.get("constraints")) if arguments.get("constraints") else None,
+            candidate_title_count=_as_int(arguments.get("candidate_title_count"), 6),
+        )
+        return _dump(data)
+
+    if name == "init_model_diagram_pack":
+        project_dir = arguments.get("project_dir")
+        model_name = arguments.get("model_name")
+        if not project_dir:
+            raise ValueError("project_dir 不能为空")
+        if not model_name:
+            raise ValueError("model_name 不能为空")
+        data = init_model_diagram_pack(
+            project_dir=str(project_dir),
+            model_name=str(model_name),
+            drawio_file_path=str(arguments.get("drawio_file_path")) if arguments.get("drawio_file_path") else None,
+            truth_priority=str(arguments.get("truth_priority") or "auto"),
+            mermaid_code=str(arguments.get("mermaid_code")) if arguments.get("mermaid_code") else None,
+            modules=arguments.get("modules"),
+            output_subdir=str(arguments.get("output_subdir") or "figures/model-diagram"),
+            force=_as_bool(arguments.get("force"), False),
+        )
+        return _dump(data)
 
     raise ValueError("未知工具: %s" % name)
 

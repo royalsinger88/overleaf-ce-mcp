@@ -75,7 +75,11 @@ def run_ols(
         )
     env = os.environ.copy()
     path_parts = [str(Path(sys.executable).parent), str(Path(sys.prefix) / "bin"), env.get("PATH", "")]
-    env["PATH"] = ":".join([p for p in path_parts if p])
+    merged_parts: List[str] = []
+    for part in path_parts:
+        if part and part not in merged_parts:
+            merged_parts.append(part)
+    env["PATH"] = os.pathsep.join(merged_parts)
     if extra_env:
         env.update(extra_env)
     return run_command([ols_bin] + args, cwd=cwd, timeout=timeout, env=env)

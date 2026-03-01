@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
-PKG_ROOT = Path(__file__).resolve().parent.parent
+PKG_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = PKG_DIR.parent
 
 
 def _resolve_template_root() -> Path:
@@ -16,7 +17,8 @@ def _resolve_template_root() -> Path:
     candidates = []
     if env_root:
         candidates.append(Path(env_root).expanduser().resolve())
-    candidates.append((PKG_ROOT / "templates").resolve())
+    candidates.append((PKG_DIR / "templates").resolve())
+    candidates.append((PROJECT_ROOT / "templates").resolve())
     candidates.append((Path.cwd() / "templates").resolve())
     candidates.append(Path("/root/overleaf-ce-mcp/templates").resolve())
 

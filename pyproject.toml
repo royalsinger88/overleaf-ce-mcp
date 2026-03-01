@@ -14,6 +14,14 @@ authors = [
 ]
 dependencies = [
   "mcp>=1.0.0",
+  "requests>=2.31.0",
+  "beautifulsoup4>=4.11.1",
+  "overleaf-sync-ce>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
 ]
 
 [project.scripts]
@@ -21,3 +29,15 @@ overleaf-ce-mcp = "overleaf_ce_mcp.server:main"
 
 [tool.setuptools]
 packages = ["overleaf_ce_mcp"]
+
+[tool.setuptools.package-data]
+overleaf_ce_mcp = [
+  "vendor_patches/olsync/*.py",
+  "vendor_patches/socketIO_client/*.py",
+  "templates/ocean-engineering-oa/*.tex",
+  "templates/ocean-engineering-oa/*.bib",
+  "templates/ocean-engineering-oa/sections/*.tex",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

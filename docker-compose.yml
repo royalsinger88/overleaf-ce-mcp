@@ -1,0 +1,17 @@
+services:
+  overleaf-ce-mcp:
+    image: overleaf-ce-mcp:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_LATEX: "0"
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    environment:
+      OVERLEAF_CE_MCP_TEMPLATE_ROOT: /opt/overleaf-ce-mcp/overleaf_ce_mcp/templates
+      S2_API_KEY: ${S2_API_KEY:-}
+    volumes:
+      - /root/overleaf-workspace:/workspace
+      - /root/.olauth:/root/.olauth
