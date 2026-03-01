@@ -1,0 +1,4 @@
+interface:
+  display_name: "SCI Paper Writer"
+  short_description: "SCI drafting + literature-grounded revision and submission workflow"
+  default_prompt: "Use $sci-paper-writer to search literature, draft sections, and prepare an SCI manuscript for submission."
