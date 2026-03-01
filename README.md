@@ -267,6 +267,8 @@ export S2_API_KEY="your_semantic_scholar_key"
 
 推荐直接调用 `run_paper_cycle`：
 - 默认从 `paper_state/inputs` 读取素材与配置
+- 默认启用 `auto_scan_inputs=true`，自动补齐 `topic/known_data/query/...` 缺省参数
+- 缺失项会写入 `paper_state/inputs/INPUT_MISSING.md`
 - 默认执行：`optimization_loop + daily_review`
 - `weekly_mode=auto` 时仅在周五自动补 `weekly_summary`
 
@@ -276,6 +278,8 @@ export S2_API_KEY="your_semantic_scholar_key"
 - `weekly_mode`：`auto` / `always` / `never`
 - `run_loop`、`run_daily`
 - `overwrite_reviews`、`write_state`
+- `auto_scan_inputs`、`write_missing_checklist`
+- `strict_missing`（为 `true` 时，有缺失素材则直接停止）
 
 ## 9. 模型结构图协同（Nano Banana Pro）
 

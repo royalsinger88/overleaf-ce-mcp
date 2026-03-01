@@ -202,22 +202,37 @@ def test_execute_tool_generate_weekly_summary(monkeypatch):
 
 
 def test_execute_tool_run_paper_cycle(monkeypatch):
-    monkeypatch.setattr(
-        server,
-        "run_paper_cycle",
-        lambda **kwargs: {
+    captured = {}
+
+    def _runner(**kwargs):
+        captured.update(kwargs)
+        return {
             "ok": True,
             "day": "2026-03-01",
             "weekly_mode": "auto",
             "executed_steps": ["optimization_loop", "daily_review"],
-        },
+        }
+
+    monkeypatch.setattr(
+        server,
+        "run_paper_cycle",
+        _runner,
     )
     text = asyncio.run(
         server._execute_tool(
             "run_paper_cycle",
-            {"project_dir": "/tmp/paper-project", "day": "2026-03-01"},
+            {
+                "project_dir": "/tmp/paper-project",
+                "day": "2026-03-01",
+                "auto_scan_inputs": True,
+                "write_missing_checklist": True,
+                "strict_missing": False,
+            },
         )
     )
     data = json.loads(text)
     assert data["ok"] is True
     assert "daily_review" in data["executed_steps"]
+    assert captured["auto_scan_inputs"] is True
+    assert captured["write_missing_checklist"] is True
+    assert captured["strict_missing"] is False

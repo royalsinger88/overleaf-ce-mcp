@@ -661,6 +661,18 @@ async def list_tools() -> List[Tool]:
                     "run_daily": {"type": "boolean", "description": "是否生成日报（默认 true）"},
                     "overwrite_reviews": {"type": "boolean", "description": "是否覆盖同名日报/周报（默认 true）"},
                     "write_state": {"type": "boolean", "description": "是否回写 review_state（默认 true）"},
+                    "auto_scan_inputs": {
+                        "type": "boolean",
+                        "description": "是否自动扫描 paper_state/inputs 并补齐缺省参数（默认 true）",
+                    },
+                    "write_missing_checklist": {
+                        "type": "boolean",
+                        "description": "是否写入 inputs 缺失清单（默认 true）",
+                    },
+                    "strict_missing": {
+                        "type": "boolean",
+                        "description": "若存在缺失素材则直接报错停止（默认 false）",
+                    },
                     "loop_write_daily_review": {
                         "type": "boolean",
                         "description": "优化循环内部是否也写日报（默认 false，避免重复）",
@@ -1495,6 +1507,9 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             run_daily=_as_bool(arguments.get("run_daily"), True),
             overwrite_reviews=_as_bool(arguments.get("overwrite_reviews"), True),
             write_state=_as_bool(arguments.get("write_state"), True),
+            auto_scan_inputs=_as_bool(arguments.get("auto_scan_inputs"), True),
+            write_missing_checklist=_as_bool(arguments.get("write_missing_checklist"), True),
+            strict_missing=_as_bool(arguments.get("strict_missing"), False),
             loop_write_daily_review=_as_bool(arguments.get("loop_write_daily_review"), False),
             loop_config_path=str(arguments.get("loop_config_path")) if arguments.get("loop_config_path") else None,
             topic=str(arguments.get("topic")) if arguments.get("topic") else None,
