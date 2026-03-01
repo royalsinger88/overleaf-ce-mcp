@@ -13,6 +13,7 @@ def test_list_academic_source_capabilities_without_s2(monkeypatch):
     assert by_key["openalex"]["enabled"] is True
     assert by_key["crossref"]["enabled"] is True
     assert by_key["semantic_scholar"]["enabled"] is False
+    assert by_key["openreview"]["enabled"] is True
 
 
 def test_fetch_paper_fulltext_fallback_to_crossref(monkeypatch):
@@ -115,3 +116,56 @@ def test_sync_zotero_paper_state_pull_write(monkeypatch, tmp_path):
     assert b.exists()
     assert "Zotero Pulled Paper" in q.read_text(encoding="utf-8")
     assert "10.1000/zotero-demo" in b.read_text(encoding="utf-8")
+
+
+def test_search_openreview_papers_parse(monkeypatch):
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "notes": [
+                    {
+                        "id": "abc123",
+                        "cdate": 1740787200000,
+                        "content": {
+                            "title": {"value": "Diffusion Models for X"},
+                            "abstract": {"value": "We propose ..."},
+                            "authors": {"value": ["Alice", "Bob"]},
+                        },
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(scholar.requests, "get", lambda *args, **kwargs: _Resp())
+    out = scholar.search_openreview_papers(query="diffusion", venue="ICLR", year=2025, limit=5, timeout=1)
+    assert len(out) == 1
+    assert out[0].source == "openreview"
+    assert out[0].paper_id == "abc123"
+    assert out[0].year == 2025
+
+
+def test_search_academic_papers_openreview_source(monkeypatch):
+    monkeypatch.setattr(
+        scholar,
+        "search_openreview_papers",
+        lambda **kwargs: [
+            scholar.PaperRecord(
+                source="openreview",
+                paper_id="n1",
+                title="Demo",
+                abstract="A",
+                authors=["A"],
+                year=2025,
+                venue="ICLR.cc 2025",
+                url="https://openreview.net/forum?id=n1",
+                pdf_url="https://openreview.net/pdf?id=n1",
+                doi=None,
+                arxiv_id=None,
+                citation_count=None,
+            )
+        ],
+    )
+    res = scholar.search_academic_papers(query="demo", source="openreview", max_results_per_source=3)
+    assert res["ok"] is True
+    assert res["count"] == 1

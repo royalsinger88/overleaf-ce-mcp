@@ -22,6 +22,7 @@ def test_list_tools_contains_key_entries():
     assert "list_academic_source_capabilities" in names
     assert "fetch_paper_fulltext" in names
     assert "sync_zotero_paper_state" in names
+    assert "search_openreview_papers" in names
 
 
 def test_execute_tool_generate_deep_research_prompt_set():
@@ -127,3 +128,37 @@ def test_execute_tool_sync_zotero_paper_state(monkeypatch):
     data = json.loads(text)
     assert data["ok"] is True
     assert data["direction"] == "push"
+
+
+def test_execute_tool_search_openreview_papers(monkeypatch):
+    class _DummyPaper:
+        def to_dict(self):
+            return {
+                "source": "openreview",
+                "paper_id": "abc",
+                "title": "Demo",
+                "abstract": "A",
+                "authors": ["Alice"],
+                "year": 2025,
+                "venue": "ICLR.cc 2025",
+                "url": "https://openreview.net/forum?id=abc",
+                "pdf_url": "https://openreview.net/pdf?id=abc",
+                "doi": None,
+                "arxiv_id": None,
+                "citation_count": None,
+            }
+
+    monkeypatch.setattr(
+        server,
+        "search_openreview_papers",
+        lambda **kwargs: [_DummyPaper()],
+    )
+    text = asyncio.run(
+        server._execute_tool(
+            "search_openreview_papers",
+            {"query": "diffusion", "venue": "ICLR", "year": 2025, "limit": 10},
+        )
+    )
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert data["count"] == 1

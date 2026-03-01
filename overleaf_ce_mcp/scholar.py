@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import datetime as _dt
 from difflib import SequenceMatcher
 import json
 import os
@@ -24,6 +25,7 @@ CROSSREF_API_URL = "https://api.crossref.org/works"
 LETPUB_BASE_URL = "https://www.letpub.com.cn"
 UNPAYWALL_API_URL = "https://api.unpaywall.org/v2"
 ZOTERO_API_BASE = "https://api.zotero.org"
+OPENREVIEW_API_URL = "https://api2.openreview.net/notes"
 
 
 JOURNAL_PRESETS: Dict[str, Dict[str, object]] = {
@@ -794,6 +796,175 @@ def search_crossref(
     return out
 
 
+def _openreview_value(raw: object) -> str:
+    if isinstance(raw, str):
+        return _clean_space(raw)
+    if isinstance(raw, dict):
+        return _clean_space(str(raw.get("value") or ""))
+    return _clean_space(str(raw or ""))
+
+
+def _openreview_list_value(raw: object) -> List[str]:
+    if isinstance(raw, list):
+        out = []
+        for x in raw:
+            v = _openreview_value(x)
+            if v:
+                out.append(v)
+        return out
+    if isinstance(raw, dict):
+        v = raw.get("value")
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+    v2 = _openreview_value(raw)
+    return [v2] if v2 else []
+
+
+def _normalize_openreview_venue(venue: str) -> str:
+    v = _clean_space(venue)
+    if not v:
+        raise ValueError("venue 不能为空")
+    low = v.lower().replace(" ", "")
+    mapping = {
+        "iclr": "ICLR.cc",
+        "iclr.cc": "ICLR.cc",
+        "neurips": "NeurIPS.cc",
+        "neurips.cc": "NeurIPS.cc",
+        "nips": "NeurIPS.cc",
+        "icml": "ICML.cc",
+        "icml.cc": "ICML.cc",
+    }
+    out = mapping.get(low)
+    if not out:
+        raise ValueError("venue 仅支持 ICLR/NeurIPS/ICML（或 *.cc）")
+    return out
+
+
+def _openreview_invitations(venue: str, year: int) -> List[str]:
+    base = f"{venue}/{year}/Conference"
+    return [
+        f"{base}/-/Blind_Submission",
+        f"{base}/-/Submission",
+        f"{base}/-/Paper",
+    ]
+
+
+def _openreview_timestamp_year(raw: object) -> Optional[int]:
+    """解析 OpenReview 常见秒/毫秒时间戳并返回年份。"""
+    if raw is None:
+        return None
+    try:
+        if isinstance(raw, (int, float)):
+            ts = float(raw)
+        else:
+            txt = _clean_space(str(raw))
+            if not txt:
+                return None
+            ts = float(txt)
+        # OpenReview 常见毫秒时间戳；若是秒级则直接使用。
+        if ts > 10_000_000_000:
+            ts = ts / 1000.0
+        if ts <= 0:
+            return None
+        return _dt.datetime.fromtimestamp(ts, tz=_dt.timezone.utc).year
+    except Exception:
+        return None
+
+
+def _openreview_note_year(note: Dict[str, object], fallback: int) -> int:
+    """从 OpenReview note 中尽量推断年份，失败时回退到查询年份。"""
+    for key in ("cdate", "pdate", "tcdate", "tmdate"):
+        y = _openreview_timestamp_year(note.get(key))
+        if y:
+            return y
+        y2 = _safe_year(str(note.get(key) or ""))
+        if y2:
+            return y2
+    return fallback
+
+
+def search_openreview_papers(
+    query: str,
+    venue: str = "ICLR.cc",
+    year: Optional[int] = None,
+    limit: int = 20,
+    timeout: int = 30,
+) -> List[PaperRecord]:
+    if not _clean_space(query):
+        raise ValueError("query 不能为空")
+    venue_norm = _normalize_openreview_venue(venue)
+    y = int(year) if year else (_dt.date.today().year - 1)
+    n = max(1, min(int(limit), 100))
+
+    q_terms = [t for t in _normalize_text(query).split(" ") if t]
+    out: List[PaperRecord] = []
+    seen: set[str] = set()
+
+    for inv in _openreview_invitations(venue_norm, y):
+        offset = 0
+        while len(out) < n:
+            remain = n - len(out)
+            batch = min(50, remain)
+            resp = requests.get(
+                OPENREVIEW_API_URL,
+                params={"invitation": inv, "limit": batch, "offset": offset},
+                timeout=timeout,
+            )
+            if resp.status_code != 200:
+                break
+            payload = resp.json()
+            notes = payload.get("notes", []) if isinstance(payload, dict) else []
+            if not isinstance(notes, list) or not notes:
+                break
+
+            pulled = 0
+            for note in notes:
+                if not isinstance(note, dict):
+                    continue
+                note_id = _clean_space(str(note.get("id") or ""))
+                if not note_id or note_id in seen:
+                    continue
+                content = note.get("content") or {}
+                if not isinstance(content, dict):
+                    content = {}
+                title = _openreview_value(content.get("title"))
+                abstract = _openreview_value(content.get("abstract"))
+                authors = _openreview_list_value(content.get("authors"))
+                hay = _normalize_text(" ".join([title, abstract, " ".join(authors)]))
+                if q_terms and not all(t in hay for t in q_terms):
+                    continue
+                seen.add(note_id)
+                year_guess = _openreview_note_year(note, fallback=y)
+                out.append(
+                    PaperRecord(
+                        source="openreview",
+                        paper_id=note_id,
+                        title=title,
+                        abstract=abstract,
+                        authors=authors,
+                        year=year_guess,
+                        venue=f"{venue_norm} {y}",
+                        url=f"https://openreview.net/forum?id={note_id}",
+                        pdf_url=f"https://openreview.net/pdf?id={note_id}",
+                        doi=None,
+                        arxiv_id=None,
+                        citation_count=None,
+                    )
+                )
+                pulled += 1
+                if len(out) >= n:
+                    break
+
+            offset += len(notes)
+            if len(notes) < batch or pulled == 0:
+                break
+
+        if len(out) >= n:
+            break
+
+    return out
+
+
 def _dedup_records(raw: List[PaperRecord]) -> List[PaperRecord]:
     dedup: Dict[str, PaperRecord] = {}
     for p in raw:
@@ -861,6 +1032,16 @@ def _build_source_adapters(timeout: int, s2_api_key: Optional[str]) -> Dict[str,
                 api_key=s2_key,
             ),
         ),
+        "openreview": AcademicSourceAdapter(
+            key="openreview",
+            name="OpenReview",
+            capabilities=["search", "conference", "peer_review_venue"],
+            requires_api_key=False,
+            api_key_env=None,
+            enabled=True,
+            skip_reason=None,
+            search_fn=lambda q, limit, t: search_openreview_papers(query=q, limit=limit, timeout=t),
+        ),
     }
 
 
@@ -868,7 +1049,7 @@ def list_academic_source_capabilities(s2_api_key: Optional[str] = None, timeout:
     _ = timeout
     adapters = _build_source_adapters(timeout=30, s2_api_key=s2_api_key)
     sources = []
-    for key in ("arxiv", "openalex", "crossref", "semantic_scholar"):
+    for key in ("arxiv", "openalex", "crossref", "semantic_scholar", "openreview"):
         ad = adapters[key]
         sources.append(
             {
@@ -895,7 +1076,7 @@ def search_academic_papers(
     adapters = _build_source_adapters(timeout=timeout, s2_api_key=s2_api_key)
     valid_sources = {"all", *adapters.keys()}
     if src not in valid_sources:
-        raise ValueError("source 仅支持 all/arxiv/openalex/crossref/semantic_scholar")
+        raise ValueError("source 仅支持 all/arxiv/openalex/crossref/semantic_scholar/openreview")
 
     chosen: List[AcademicSourceAdapter] = []
     if src == "all":

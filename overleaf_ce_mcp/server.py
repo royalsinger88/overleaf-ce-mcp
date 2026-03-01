@@ -34,6 +34,7 @@ from .scholar import (
     recommend_target_journals,
     search_academic_papers,
     search_in_journal_preset,
+    search_openreview_papers,
     sync_zotero_paper_state,
     verify_reference,
 )
@@ -300,7 +301,7 @@ async def list_tools() -> List[Tool]:
                     "query": {"type": "string", "description": "检索词（必填）"},
                     "source": {
                         "type": "string",
-                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar"],
+                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar", "openreview"],
                         "description": "检索来源，默认 all",
                     },
                     "max_results_per_source": {
@@ -312,6 +313,24 @@ async def list_tools() -> List[Tool]:
                         "type": "string",
                         "description": "Semantic Scholar API Key（可选，仅 source=semantic_scholar 或 all 且需要 S2 时）",
                     },
+                },
+                "required": ["query"],
+            },
+        ),
+        Tool(
+            name="search_openreview_papers",
+            description="检索 OpenReview 顶会论文（ICLR/NeurIPS/ICML）。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "检索词（必填）"},
+                    "venue": {
+                        "type": "string",
+                        "description": "会场名称，支持 ICLR/NeurIPS/ICML 或 *.cc（默认 ICLR.cc）",
+                    },
+                    "year": {"type": "integer", "description": "年份（默认当前年-1）"},
+                    "limit": {"type": "integer", "description": "返回上限（默认20，最大100）"},
+                    "timeout": {"type": "integer", "description": "请求超时秒数（默认 30）"},
                 },
                 "required": ["query"],
             },
@@ -406,7 +425,7 @@ async def list_tools() -> List[Tool]:
                     "query": {"type": "string", "description": "研究主题检索词（必填）"},
                     "source": {
                         "type": "string",
-                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar"],
+                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar", "openreview"],
                         "description": "检索来源，默认 all",
                     },
                     "max_results_per_source": {
@@ -441,7 +460,7 @@ async def list_tools() -> List[Tool]:
                     "journal_preset": {"type": "string", "description": "预设键（必填，如 top_ai_conferences）"},
                     "source": {
                         "type": "string",
-                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar"],
+                        "enum": ["all", "arxiv", "openalex", "crossref", "semantic_scholar", "openreview"],
                         "description": "检索来源，默认 all",
                     },
                     "max_results_per_source": {"type": "integer", "description": "每源返回上限（默认 12）"},
@@ -1065,6 +1084,26 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
             s2_api_key=str(s2_api_key) if s2_api_key else None,
         )
         return _dump(data)
+
+    if name == "search_openreview_papers":
+        query = arguments.get("query")
+        if not query:
+            raise ValueError("query 不能为空")
+        data = search_openreview_papers(
+            query=str(query),
+            venue=str(arguments.get("venue") or "ICLR.cc"),
+            year=_as_int(arguments.get("year"), 0) or None,
+            limit=_as_int(arguments.get("limit"), 20),
+            timeout=_as_int(arguments.get("timeout"), 30),
+        )
+        return _dump(
+            {
+                "ok": bool(data),
+                "query": str(query),
+                "count": len(data),
+                "papers": [x.to_dict() for x in data],
+            }
+        )
 
     if name == "list_academic_source_capabilities":
         s2_api_key = arguments.get("s2_api_key")

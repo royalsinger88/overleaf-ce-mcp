@@ -90,8 +90,9 @@ docker run --rm -it \
 - `upload_project_dir`: 将本地目录按通用规则打包后上传到 CE（创建新项目或覆盖已有项目）
 - `health_check_project`: 检查项目可见性与可编译性
 - `apply_compat_patches`: 手动触发兼容补丁（通常无需手动执行）
-- `search_academic_papers`: 检索论文（默认 arXiv + OpenAlex + Crossref，可选 Semantic Scholar）
+- `search_academic_papers`: 检索论文（默认 arXiv + OpenAlex + Crossref，可选 Semantic Scholar；支持显式 OpenReview）
 - `list_academic_source_capabilities`: 列出检索适配器能力和可用状态
+- `search_openreview_papers`: 显式检索 OpenReview 顶会论文（ICLR/NeurIPS/ICML）
 - `fetch_paper_fulltext`: 按回退链拉取论文可用文本（OA/元数据/摘要）
 - `sync_zotero_paper_state`: `paper_state` 与 Zotero 同步（pull/push/bidirectional，支持 dry-run）
 - `letpub_search_journals`: 通过 LetPub 检索期刊关键信息
@@ -210,8 +211,9 @@ paper_state/
 
 推荐配置：
 - 默认 `source=all`：走 `arXiv + OpenAlex + Crossref`，无需任何 API Key
+- 如配置了 `S2_API_KEY`：`source=all` 会额外叠加 `Semantic Scholar`
+- OpenReview 需显式使用 `source=openreview` 或 `search_openreview_papers`（不默认并入 `all`）
 - 可先调 `list_academic_source_capabilities`，由能力清单自动决定检索编排
-- 需要 Semantic Scholar 时：可选配置 `S2_API_KEY`
 - 需要“投稿期刊优选”时：先 `list_journal_presets`，再 `recommend_target_journals`
 - 需要“引用防幻觉”时：用 `verify_reference` 对标题/DOI 做核验
 - 需要“正文抓取”时：用 `fetch_paper_fulltext`，按 `Unpaywall -> OpenAlex DOI -> Crossref DOI -> arXiv -> URL -> 标题检索` 回退
