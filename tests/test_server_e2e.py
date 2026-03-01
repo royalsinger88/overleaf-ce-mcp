@@ -348,10 +348,16 @@ def test_execute_tool_init_generic_priority_plan(monkeypatch):
 
 
 def test_execute_tool_run_generic_priority_loop(monkeypatch):
+    captured = {}
+
+    def _runner(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "executed": [{"task_id": "t1", "ok": True}]}
+
     monkeypatch.setattr(
         server,
         "run_generic_priority_loop",
-        lambda **kwargs: {"ok": True, "executed": [{"task_id": "t1", "ok": True}]},
+        _runner,
     )
     text = asyncio.run(
         server._execute_tool(
@@ -362,3 +368,29 @@ def test_execute_tool_run_generic_priority_loop(monkeypatch):
     data = json.loads(text)
     assert data["ok"] is True
     assert data["executed"][0]["task_id"] == "t1"
+    assert captured["plan_path"] == "plan.json"
+
+
+def test_execute_tool_run_generic_priority_loop_with_task_text(monkeypatch):
+    captured = {}
+
+    def _runner(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "executed": [{"task_id": "task_001", "ok": True}]}
+
+    monkeypatch.setattr(server, "run_generic_priority_loop", _runner)
+    text = asyncio.run(
+        server._execute_tool(
+            "run_generic_priority_loop",
+            {
+                "workspace_dir": "/tmp/ws",
+                "task_text": "改进A\n改进B",
+                "default_action": "noop",
+                "dry_run": True,
+            },
+        )
+    )
+    data = json.loads(text)
+    assert data["ok"] is True
+    assert captured["task_text"] == "改进A\n改进B"
+    assert captured["plan_path"] is None

@@ -825,6 +825,20 @@ async def list_tools() -> List[Tool]:
                 "properties": {
                     "workspace_dir": {"type": "string", "description": "工作目录（必填）"},
                     "plan_path": {"type": "string", "description": "任务计划 JSON 路径（可相对 workspace）"},
+                    "task_text": {"type": "string", "description": "直接输入任务文本（可替代 plan_path）"},
+                    "command_template": {
+                        "type": "string",
+                        "description": "task_text 模式下 shell 命令模板，支持 {task} 占位符",
+                    },
+                    "default_action": {
+                        "type": "string",
+                        "enum": ["noop", "shell"],
+                        "description": "task_text 模式默认动作（默认 noop）",
+                    },
+                    "chain_dependencies": {
+                        "type": "boolean",
+                        "description": "task_text 模式是否按文本顺序串行依赖（默认 false）",
+                    },
                     "max_tasks": {"type": "integer", "description": "本轮最多执行任务数（默认 10）"},
                     "dry_run": {"type": "boolean", "description": "仅规划不执行（默认 false）"},
                     "continue_on_error": {"type": "boolean", "description": "遇错是否继续（默认 true）"},
@@ -832,7 +846,7 @@ async def list_tools() -> List[Tool]:
                     "allow_shell": {"type": "boolean", "description": "是否允许执行 shell 任务（默认 false）"},
                     "default_timeout_sec": {"type": "integer", "description": "shell 任务默认超时秒数（默认 1800）"},
                 },
-                "required": ["workspace_dir", "plan_path"],
+                "required": ["workspace_dir"],
             },
         ),
         Tool(
@@ -1737,13 +1751,18 @@ async def _execute_tool(name: str, arguments: Dict[str, Any]) -> str:
     if name == "run_generic_priority_loop":
         workspace_dir = arguments.get("workspace_dir")
         plan_path = arguments.get("plan_path")
+        task_text = arguments.get("task_text")
         if not workspace_dir:
             raise ValueError("workspace_dir 不能为空")
-        if not plan_path:
-            raise ValueError("plan_path 不能为空")
+        if not plan_path and not task_text:
+            raise ValueError("plan_path 与 task_text 至少提供一个")
         data = run_generic_priority_loop(
             workspace_dir=str(workspace_dir),
-            plan_path=str(plan_path),
+            plan_path=str(plan_path) if plan_path else None,
+            task_text=str(task_text) if task_text else None,
+            command_template=str(arguments.get("command_template")) if arguments.get("command_template") else None,
+            default_action=str(arguments.get("default_action") or "noop"),
+            chain_dependencies=_as_bool(arguments.get("chain_dependencies"), False),
             max_tasks=_as_int(arguments.get("max_tasks"), 10),
             dry_run=_as_bool(arguments.get("dry_run"), False),
             continue_on_error=_as_bool(arguments.get("continue_on_error"), True),

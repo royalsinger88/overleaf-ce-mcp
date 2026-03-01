@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -71,6 +72,81 @@ def _load_plan(plan_path: Path) -> Dict[str, Any]:
     if not isinstance(tasks, list) or not tasks:
         raise ValueError("计划文件需包含非空 tasks 数组")
     return obj
+
+
+def _split_task_text(task_text: str) -> List[str]:
+    text = str(task_text or "").replace("\r\n", "\n")
+    lines = [x.strip() for x in text.split("\n") if x.strip()]
+    out: List[str] = []
+    for ln in lines:
+        s = re.sub(r"^\s*[-*+]\s*", "", ln)
+        s = re.sub(r"^\s*\d+\s*[\.\)、]\s*", "", s)
+        if not s:
+            continue
+        parts = [p.strip() for p in re.split(r"[;；]+", s) if p.strip()]
+        out.extend(parts if parts else [s])
+    # 单行逗号分隔场景再切一次
+    if len(out) == 1 and ("，" in out[0] or "," in out[0]):
+        raw = out[0]
+        parts2 = [p.strip() for p in re.split(r"[，,]+", raw) if p.strip()]
+        if len(parts2) >= 2:
+            out = parts2
+    # 去重并保持顺序
+    uniq: List[str] = []
+    seen = set()
+    for x in out:
+        key = x.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        uniq.append(key)
+    return uniq
+
+
+def _shell_quote_single(text: str) -> str:
+    return "'" + str(text).replace("'", "'\"'\"'") + "'"
+
+
+def _build_plan_from_task_text(
+    task_text: str,
+    default_action: str = "noop",
+    command_template: Optional[str] = None,
+    chain_dependencies: bool = False,
+) -> Dict[str, Any]:
+    tasks_raw = _split_task_text(task_text)
+    if not tasks_raw:
+        raise ValueError("task_text 未解析出有效任务")
+
+    action_mode = str(default_action or "noop").strip().lower()
+    if action_mode not in ("noop", "shell"):
+        raise ValueError("default_action 仅支持 noop/shell")
+    if command_template:
+        action_mode = "shell"
+
+    tasks: List[Dict[str, Any]] = []
+    for i, txt in enumerate(tasks_raw, start=1):
+        tid = f"task_{i:03d}"
+        deps = [f"task_{i-1:03d}"] if (chain_dependencies and i > 1) else []
+        impact = max(1, 10 - (i - 1))
+        effort = 3
+        if action_mode == "shell":
+            tpl = str(command_template or "echo {task}")
+            quoted = _shell_quote_single(txt)
+            cmd = tpl.replace("{task}", quoted) if "{task}" in tpl else f"{tpl} {quoted}"
+            action: Dict[str, Any] = {"type": "shell", "cmd": cmd, "cwd": ".", "timeout_sec": 1800}
+        else:
+            action = {"type": "noop"}
+        tasks.append(
+            {
+                "id": tid,
+                "title": txt,
+                "impact": impact,
+                "effort": effort,
+                "dependencies": deps,
+                "action": action,
+            }
+        )
+    return {"tasks": tasks}
 
 
 def _normalize_task(task: Dict[str, Any]) -> Dict[str, Any]:
@@ -203,7 +279,11 @@ def list_generic_priority_tasks(
 
 def run_generic_priority_loop(
     workspace_dir: str,
-    plan_path: str,
+    plan_path: Optional[str] = None,
+    task_text: Optional[str] = None,
+    command_template: Optional[str] = None,
+    default_action: str = "noop",
+    chain_dependencies: bool = False,
     max_tasks: int = 10,
     dry_run: bool = False,
     continue_on_error: bool = True,
@@ -214,10 +294,30 @@ def run_generic_priority_loop(
     root = Path(workspace_dir).expanduser().resolve()
     if not root.exists() or not root.is_dir():
         raise ValueError(f"workspace_dir 不是有效目录: {root}")
-    pp = Path(plan_path).expanduser()
-    if not pp.is_absolute():
-        pp = (root / pp).resolve()
-    plan = _load_plan(pp)
+
+    plan: Dict[str, Any]
+    pp: Path
+    source_mode = "file"
+    if task_text and str(task_text).strip():
+        source_mode = "text"
+        plan = _build_plan_from_task_text(
+            task_text=str(task_text),
+            default_action=default_action,
+            command_template=command_template,
+            chain_dependencies=chain_dependencies,
+        )
+        gen_dir = _loop_root(root) / "generated-plans"
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        pp = gen_dir / f"plan_{ts}.json"
+        pp.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+    else:
+        if not plan_path:
+            raise ValueError("plan_path 与 task_text 至少提供一个")
+        pp = Path(plan_path).expanduser()
+        if not pp.is_absolute():
+            pp = (root / pp).resolve()
+        plan = _load_plan(pp)
     raw_tasks = [_normalize_task(x) for x in plan["tasks"]]
 
     state = _load_state(root) if resume else {"completed": {}, "history": []}
@@ -304,6 +404,7 @@ def run_generic_priority_loop(
         "ok": all(bool(x.get("ok")) for x in executed if x.get("status") not in ("blocked",)) if executed else True,
         "workspace_dir": str(root),
         "plan_path": str(pp),
+        "plan_source_mode": source_mode,
         "executed_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
         "dry_run": dry_run,
         "resume": resume,

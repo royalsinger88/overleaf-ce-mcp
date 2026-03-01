@@ -114,7 +114,7 @@ docker run --rm -it \
 - `list_generic_priority_plan_templates`: 列出内置通用计划模板
 - `init_generic_priority_plan`: 从模板初始化 `plan.json`
 - `list_generic_priority_tasks`: 读取任意任务计划（JSON）并给出优先级队列
-- `run_generic_priority_loop`: 执行通用优先级循环（可 dry-run / resume / shell）
+- `run_generic_priority_loop`: 执行通用优先级循环（支持 plan.json 或 task_text 直接输入）
 - `generate_daily_review`: 生成每日复盘（自动汇总当日轮次与证据）
 - `generate_weekly_summary`: 生成每周总结（自动聚合日报与证据）
 - `init_model_diagram_pack`: 生成模型结构图生产包（真值拓扑 + Nano Banana Pro 提示词）
@@ -316,6 +316,10 @@ export S2_API_KEY="your_semantic_scholar_key"
   ]
 }
 ```
+
+也可直接传任务文本（无需 plan 文件）：
+- `task_text="1. 改进A\n2. 改进B\n3. 改进C"`
+- 可配 `command_template`，例如 `python scripts/improve.py --task {task}`
 
 ## 9. 模型结构图协同（Nano Banana Pro）
 

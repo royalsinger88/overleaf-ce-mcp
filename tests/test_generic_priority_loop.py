@@ -109,3 +109,29 @@ def test_run_generic_priority_loop_shell(tmp_path):
     )
     assert any(x.get("task_id") == "t2" and x.get("ok") for x in res2["executed"])
     assert (tmp_path / "marker.txt").exists()
+
+
+def test_run_generic_priority_loop_from_task_text_noop(tmp_path):
+    res = run_generic_priority_loop(
+        workspace_dir=str(tmp_path),
+        task_text="1. 改进数据清洗\n2. 补充单元测试\n3. 更新文档",
+        default_action="noop",
+        dry_run=False,
+        resume=False,
+    )
+    assert res["ok"] is True
+    assert res["plan_source_mode"] == "text"
+    assert len(res["executed"]) == 3
+
+
+def test_run_generic_priority_loop_from_task_text_shell(tmp_path):
+    res = run_generic_priority_loop(
+        workspace_dir=str(tmp_path),
+        task_text="写入标记文件",
+        command_template="echo done > from_text_marker.txt",
+        dry_run=False,
+        allow_shell=True,
+        resume=False,
+    )
+    assert res["ok"] is True
+    assert (tmp_path / "from_text_marker.txt").exists()
